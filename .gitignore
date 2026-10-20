@@ -1,0 +1,17 @@
+# Python & Virtual Environments
+.env
+.venv/
+env/
+venv/
+__pycache__/
+*.py[cod]
+
+# SQLite Database (Bảo mật dữ liệu cục bộ - NT2)
+*.db
+*.sqlite
+*.sqlite3
+
+# IDEs
+.vscode/
+.idea/
+*.swp
