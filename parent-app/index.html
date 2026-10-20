@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parent Dashboard - Trạm Điều Khiển Của Phụ Huynh</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .toast {
+            animation: slideDown 0.3s ease-out;
+        }
+        @keyframes slideDown {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen p-4 md:p-8 text-slate-800">
+    <div class="max-w-4xl mx-auto space-y-6">
+        
+        <!-- Header -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                    <span>Trạm Điều Khiển Của Phụ Huynh</span> 🛡️
+                </h1>
+                <p class="text-sm text-slate-500 mt-1">Quản lý duyệt web/app, giới hạn thời gian & đồng hành an toàn cùng con</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="openOnboardingModal()" class="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold shadow-sm transition flex items-center gap-1.5">
+                    <span>🧙‍♂️ Cấu hình gốc</span>
+                </button>
+                <span id="ws-badge" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+                    <span class="w-2 h-2 mr-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    Đang kết nối...
+                </span>
+            </div>
+        </div>
+
+        <!-- Banner cảnh báo khi chưa kết nối Backend Server -->
+        <div id="server-offline-banner" class="hidden p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-900 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div class="flex items-start gap-3">
+                <span class="text-2xl">⚠️</span>
+                <div>
+                    <h4 class="font-bold text-sm text-amber-800">Chưa kết nối được tới Backend Server!</h4>
+                    <p class="text-xs text-amber-700 mt-0.5">
+                        Backend đang chạy tại cổng nào? Bạn có thể mở Terminal chạy: <code class="bg-amber-100 px-2 py-0.5 rounded font-mono text-amber-900 font-bold">source .venv/bin/activate && uvicorn backend.app.main:app --port 8008 --reload</code>
+                    </p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="text" id="custom-backend-url" placeholder="http://127.0.0.1:8008" class="text-xs border border-amber-300 rounded-xl px-2.5 py-1.5 bg-white text-slate-700 w-36 focus:outline-none">
+                <button onclick="changeBackendUrl()" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs whitespace-nowrap">Kết nối lại 🔄</button>
+            </div>
+        </div>
+
+        <!-- Khung Thông Báo Toast Thời Gian Thực -->
+        <div id="toast-container" class="space-y-2"></div>
+
+        <!-- Cảnh báo vi phạm tức thì -->
+        <div id="alert-banner" class="hidden p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 flex items-center justify-between shadow-sm">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl">⚠️</span>
+                <div>
+                    <h4 class="font-bold text-sm" id="alert-title">Cảnh báo truy cập chưa xin phép!</h4>
+                    <p class="text-xs text-rose-600" id="alert-desc">Con vừa cố mở phần mềm nhưng bị chặn lại.</p>
+                </div>
+            </div>
+            <button onclick="document.getElementById('alert-banner').classList.add('hidden')" class="text-rose-500 hover:text-rose-800 font-bold px-2">&times;</button>
+        </div>
+
+        <!-- KHỐI 1: ĐIỀU KHIỂN KHẨN CẤP & GỬI TIN NHẮN -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h2 class="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <span>⚡</span> Điều khiển Khẩn cấp & Liên hệ Trực tiếp
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="p-4 bg-red-50 border border-red-200 rounded-xl">
+                    <h3 class="font-semibold text-red-800 text-sm mb-1">Khóa / Mở Khóa Máy Tính</h3>
+                    <p class="text-xs text-red-600 mb-3">Tác động tức thì đến màn hình và agent của con.</p>
+                    <div class="flex gap-2">
+                        <button onclick="sendLockCommand()" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-3 rounded-lg text-xs shadow-sm transition">
+                            🔒 Khóa máy ngay
+                        </button>
+                        <button onclick="sendUnlockCommand()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-3 rounded-lg text-xs shadow-sm transition">
+                            🔓 Mở khóa máy
+                        </button>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-indigo-50 border border-indigo-200 rounded-xl">
+                    <h3 class="font-semibold text-indigo-800 text-sm mb-1">Gửi lời nhắn nhanh cho con</h3>
+                    <p class="text-xs text-indigo-600 mb-3">Thông điệp sẽ hiển thị ngay lập tức trên máy con.</p>
+                    <div class="flex gap-2">
+                        <input type="text" id="parent-message-input" placeholder="VD: Hết giờ rồi, chuẩn bị ăn cơm con nhé!" class="flex-1 border border-indigo-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <button onclick="sendMessageToChild()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-xs transition">
+                            Gửi 💬
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- KHỐI 2: XEM & PHÊ DUYỆT YÊU CẦU TỪ TRẺ (NT3 & NT5) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <span>📩</span> Yêu cầu xin phép từ máy con
+                    </h2>
+                    <p class="text-xs text-slate-500">Xem xét và phê duyệt khi con xin phép mở Web / Ứng dụng mới hoặc xin thêm giờ</p>
+                </div>
+                <button onclick="fetchRequests()" class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
+                    🔄 Làm mới
+                </button>
+            </div>
+
+            <div id="requests-container" class="space-y-3">
+                <p class="text-slate-500 text-xs italic py-4 text-center">Đang tải danh sách yêu cầu...</p>
+            </div>
+        </div>
+
+        <!-- KHỐI 3: GAMIFICATION - ĐỔI VIỆC TỐT LẤY GIỜ CHƠI -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <span>🏆</span> Đổi Việc Tốt Lấy Giờ Chơi (Gamification)
+                    </h2>
+                    <p class="text-xs text-slate-500">Giao nhiệm vụ / việc nhà để khuyến khích con rèn luyện thói quen tốt</p>
+                </div>
+                <button onclick="fetchTasks()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg transition">
+                    🔄 Làm mới
+                </button>
+            </div>
+
+            <!-- Form tạo việc tốt mới -->
+            <form onsubmit="createTask(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-2 mb-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <input type="text" id="taskTitle" required placeholder="Tên việc (VD: Làm xong bài tập Toán)" class="border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none sm:col-span-2">
+                <select id="taskReward" class="border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                    <option value="15">Thưởng: +15 phút</option>
+                    <option value="20" selected>Thưởng: +20 phút</option>
+                    <option value="30">Thưởng: +30 phút</option>
+                    <option value="45">Thưởng: +45 phút</option>
+                </select>
+                <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg text-xs transition">
+                    Tạo nhiệm vụ ➕
+                </button>
+            </form>
+
+            <div id="tasks-container" class="space-y-2.5 max-h-64 overflow-y-auto">
+                <p class="text-slate-400 text-xs italic py-2 text-center">Đang tải danh sách nhiệm vụ...</p>
+            </div>
+        </div>
+
+        <!-- KHỐI 4: THỐNG KÊ THỜI GIAN SỬ DỤNG, GIỚI HẠN & THỜI GIAN CÒN LẠI -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <span>📊</span> Thống kê thời gian sử dụng & Giới hạn thời gian
+                    </h2>
+                    <p class="text-xs text-slate-500">Theo dõi số phút con đã dùng, thời gian còn lại và cài đặt giới hạn</p>
+                </div>
+                <button onclick="fetchUsageStats()" class="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
+                    🔄 Tải báo cáo mới nhất
+                </button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                    <span class="text-xs text-slate-500 block">⏱️ Tổng thời gian dùng máy</span>
+                    <span id="stat-total-time" class="text-xl font-bold text-slate-800">--</span>
+                </div>
+                <div class="bg-emerald-50 border border-emerald-200 p-4 rounded-xl">
+                    <span class="text-xs text-emerald-700 block">📚 Thời gian Học tập</span>
+                    <span id="stat-learning-time" class="text-xl font-bold text-emerald-800">--</span>
+                </div>
+                <div class="bg-rose-50 border border-rose-200 p-4 rounded-xl">
+                    <span class="text-xs text-rose-700 block">🎮 Giải trí & Mạng xã hội</span>
+                    <span id="stat-entertainment-time" class="text-xl font-bold text-rose-800">--</span>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap gap-1.5 mb-3">
+                <button onclick="filterUsage('ALL', this)" class="usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-emerald-600 text-white">Tất cả</button>
+                <button onclick="filterUsage('LEARNING', this)" class="usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">📚 Học tập</button>
+                <button onclick="filterUsage('ENTERTAINMENT', this)" class="usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">🎮 Giải trí & Game</button>
+                <button onclick="filterUsage('SOCIAL', this)" class="usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">💬 Mạng xã hội</button>
+                <button onclick="filterUsage('UTILITIES', this)" class="usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">🛠️ Công cụ</button>
+            </div>
+
+            <div id="usage-list" class="space-y-3 max-h-96 overflow-y-auto">
+                <p class="text-slate-400 text-xs italic py-3 text-center">Bấm tải báo cáo để xem chi tiết.</p>
+            </div>
+        </div>
+
+        <!-- KHỐI 5: QUẢN LÝ QUY TẮC WEB & PHẦN MỀM -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <span>🛡️</span> Quản lý Quy tắc Web & Phần mềm
+                    </h2>
+                    <p class="text-xs text-slate-500">Danh sách các trang web / ứng dụng đang được Cho phép hoặc Chặn</p>
+                </div>
+                <button onclick="fetchRules()" class="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
+                    🔄 Làm mới
+                </button>
+            </div>
+
+            <form onsubmit="addRule(event)" class="grid grid-cols-1 sm:grid-cols-5 gap-2 mb-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <select id="newRuleType" class="border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                    <option value="WEBSITE">🌐 Trang web</option>
+                    <option value="APP">📱 Phần mềm (App)</option>
+                </select>
+                <input type="text" id="newRuleValue" required placeholder="Tên web/app (VD: youtube.com)" class="border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none sm:col-span-2">
+                <select id="newRuleLimit" class="border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                    <option value="30">Giới hạn: 30 phút</option>
+                    <option value="60" selected>Giới hạn: 60 phút</option>
+                    <option value="120">Giới hạn: 2 giờ</option>
+                    <option value="0">Không giới hạn</option>
+                </select>
+                <div class="flex gap-1.5">
+                    <select id="newRuleAction" class="border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none flex-1">
+                        <option value="ALLOW">Cho phép</option>
+                        <option value="BLOCK">Chặn</option>
+                    </select>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-2 rounded-lg text-xs transition">
+                        Thêm ➕
+                    </button>
+                </div>
+            </form>
+
+            <div id="rules-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto">
+                <p class="text-slate-400 text-xs italic col-span-full py-2 text-center">Đang tải danh sách quy tắc...</p>
+            </div>
+        </div>
+
+        <!-- KHỐI 6: CÀI ĐẶT & ĐẶT LẠI HỆ THỐNG (RESET DÀNH CHO PHỤ HUYNH) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h2 class="text-lg font-bold text-slate-800 mb-1 flex items-center gap-2">
+                <span>🔄</span> Cài Đặt & Đặt Lại Hệ Thống (Reset dành cho Phụ huynh)
+            </h2>
+            <p class="text-xs text-slate-500 mb-4">Các chức năng đặt lại thời gian, làm mới hộp thư yêu cầu hoặc khôi phục cài đặt gốc.</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div class="p-3.5 bg-indigo-50/60 border border-indigo-200 rounded-xl flex flex-col justify-between gap-3">
+                    <div>
+                        <h4 class="font-bold text-indigo-900 text-xs">🌅 Bắt Đầu Ngày Mới</h4>
+                        <p class="text-[11px] text-indigo-700 mt-1">Làm mới giờ về 0 và mở lại việc tốt hàng ngày.</p>
+                    </div>
+                    <button onclick="handleReset('daily')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition shadow-sm">
+                        Reset ngày mới
+                    </button>
+                </div>
+
+                <div class="p-3.5 bg-blue-50/60 border border-blue-200 rounded-xl flex flex-col justify-between gap-3">
+                    <div>
+                        <h4 class="font-bold text-blue-900 text-xs">⏱️ Reset Thời Gian</h4>
+                        <p class="text-[11px] text-blue-700 mt-1">Đưa thời gian đã dùng của con về 0 phút.</p>
+                    </div>
+                    <button onclick="handleReset('usage')" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition shadow-sm">
+                        Đặt lại thời gian về 0
+                    </button>
+                </div>
+
+                <div class="p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-xl flex flex-col justify-between gap-3">
+                    <div>
+                        <h4 class="font-bold text-emerald-900 text-xs">🛡️ Reset Quy Tắc</h4>
+                        <p class="text-[11px] text-emerald-700 mt-1">Đưa danh sách cho phép và chặn về mặc định.</p>
+                    </div>
+                    <button onclick="handleReset('rules')" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition shadow-sm">
+                        Đặt lại quy tắc chuẩn
+                    </button>
+                </div>
+
+                <div class="p-3.5 bg-amber-50/60 border border-amber-200 rounded-xl flex flex-col justify-between gap-3">
+                    <div>
+                        <h4 class="font-bold text-amber-900 text-xs">🧹 Xóa Lịch Sử</h4>
+                        <p class="text-[11px] text-amber-700 mt-1">Làm sạch danh sách yêu cầu cũ để gọn gàng hộp thư.</p>
+                    </div>
+                    <button onclick="handleReset('requests')" class="w-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition shadow-sm">
+                        Làm sạch hộp thư
+                    </button>
+                </div>
+
+                <div class="p-3.5 bg-rose-50/60 border border-rose-200 rounded-xl flex flex-col justify-between gap-3">
+                    <div>
+                        <h4 class="font-bold text-rose-900 text-xs">⚠️ Khôi Phục Gốc</h4>
+                        <p class="text-[11px] text-rose-700 mt-1">Reset toàn bộ: thời gian, quy tắc, yêu cầu về ban đầu.</p>
+                    </div>
+                    <button onclick="handleReset('all')" class="w-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition shadow-sm">
+                        Khôi phục toàn bộ
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- MODAL ONBOARDING SETUP (THIẾT LẬP LẦN ĐẦU) -->
+    <div id="onboarding-modal" class="fixed inset-0 bg-slate-900/60 z-50 hidden flex justify-center items-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-200">
+            <div class="flex items-center justify-between border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <span>🧙‍♂️ Thiết Lập Cấu Hình Gốc (Onboarding)</span>
+                </h3>
+                <button onclick="closeOnboardingModal()" class="text-slate-400 hover:text-slate-600 font-bold text-lg">&times;</button>
+            </div>
+            <p class="text-xs text-slate-500">Thiết lập hạn mức thời gian và quy chuẩn ban đầu cho các phiên sử dụng của con.</p>
+
+            <form onsubmit="saveOnboarding(event)" class="space-y-4">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">📚 Hạn mức Học tập / ngày:</label>
+                        <select id="obLearn" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="120">120 phút (2 giờ)</option>
+                            <option value="180" selected>180 phút (3 giờ)</option>
+                            <option value="240">240 phút (4 giờ)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">🎮 Hạn mức Giải trí / ngày:</label>
+                        <select id="obEnt" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="30">30 phút</option>
+                            <option value="45" selected>45 phút</option>
+                            <option value="60">60 phút (1 giờ)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">🌙 Khung giờ giới nghiêm (Bedtime Mode):</label>
+                    <input type="time" id="obBedtime" value="22:00" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                    <p class="text-[11px] text-slate-400 mt-0.5">Máy tính sẽ tự động khóa sau giờ này bất kể thời gian trong ngày còn hay không.</p>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">🟢 Web / App được phép sẵn (cách nhau dấu phẩy):</label>
+                    <input type="text" id="obAllowed" value="khanacademy.org, wikipedia.org, duolingo.com, code.exe" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">🛑 Web / App bị cấm mặc định (cách nhau dấu phẩy):</label>
+                    <input type="text" id="obBlocked" value="youtube.com, facebook.com, discord.com, tiktok.com, roblox" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">🏆 Việc cần làm hàng ngày cho trẻ (cách nhau dấu phẩy, kèm số phút):</label>
+                    <input type="text" id="obTasks" value="Làm xong bài tập Toán (20p), Dọn dẹp góc học tập (15p), Đọc 10 trang sách tiếng Anh (25p)" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                    <p class="text-[11px] text-slate-400 mt-0.5">Trẻ hoàn thành sẽ nhận thưởng thêm phút sử dụng tương ứng.</p>
+                </div>
+
+                <div class="flex gap-2 pt-2 border-t">
+                    <button type="button" onclick="closeOnboardingModal()" class="flex-1 py-2 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">Đóng</button>
+                    <button type="submit" class="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-sm transition">Lưu làm quy chuẩn 💾</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let API_BASE = "http://127.0.0.1:8008";
+        let WS_URL = "ws://127.0.0.1:8008/ws/agent/parent_dashboard";
+
+        if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+            const host = window.location.hostname || "127.0.0.1";
+            const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
+            const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+            API_BASE = `${window.location.protocol}//${host}${window.location.port ? ':' + window.location.port : ''}`;
+            WS_URL = `${wsProto}//${host}${window.location.port ? ':' + window.location.port : ''}/ws/agent/parent_dashboard`;
+        }
+
+        let ws = null;
+        let cachedUsageItems = [];
+
+        async function autoDetectBackendPort() {
+            if (window.location.protocol === "file:") {
+                const ports = [8008, 8000, 8001, 8080];
+                for (const p of ports) {
+                    try {
+                        const res = await fetch(`http://127.0.0.1:${p}/`, { signal: AbortSignal.timeout(400) });
+                        if (res.ok) {
+                            API_BASE = `http://127.0.0.1:${p}`;
+                            WS_URL = `ws://127.0.0.1:${p}/ws/agent/parent_dashboard`;
+                            const customInput = document.getElementById("custom-backend-url");
+                            if (customInput) customInput.value = API_BASE;
+                            return true;
+                        }
+                    } catch (e) {}
+                }
+            }
+            return false;
+        }
+
+        function changeBackendUrl() {
+            const input = document.getElementById("custom-backend-url");
+            if (input && input.value.trim()) {
+                let target = input.value.trim();
+                if (!target.startsWith("http")) target = "http://" + target;
+                API_BASE = target;
+                const wsHost = target.replace("http://", "").replace("https://", "");
+                WS_URL = `ws://${wsHost}/ws/agent/parent_dashboard`;
+            }
+            initWebSocket();
+            fetchRequests();
+            fetchTasks();
+            fetchUsageStats();
+            fetchRules();
+        }
+
+        function showServerNotice(show) {
+            const banner = document.getElementById("server-offline-banner");
+            if (banner) {
+                if (show) banner.classList.remove("hidden");
+                else banner.classList.add("hidden");
+            }
+            const customInput = document.getElementById("custom-backend-url");
+            if (customInput && !customInput.value) {
+                customInput.value = API_BASE;
+            }
+        }
+
+        // 1. Kết nối WebSocket
+        function initWebSocket() {
+            const wsBadge = document.getElementById("ws-badge");
+            try {
+                ws = new WebSocket(WS_URL);
+
+                ws.onopen = () => {
+                    wsBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800";
+                    wsBadge.innerHTML = `<span class="w-2 h-2 mr-1.5 rounded-full bg-emerald-500"></span>Đã kết nối 🟢`;
+                    showServerNotice(false);
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === "NEW_REQUEST") {
+                            showToast(`🔔 Bé vừa xin phép: "${data.data.target_detail}" - Lý do: ${data.data.reason_from_child}`, "info");
+                            fetchRequests();
+                        } else if (data.type === "UNAPPROVED_ATTEMPT") {
+                            const banner = document.getElementById("alert-banner");
+                            document.getElementById("alert-title").innerText = `⚠️ Cảnh báo: Con vừa cố mở "${data.app_name}"!`;
+                            document.getElementById("alert-desc").innerText = data.message || "Ứng dụng chưa được phép và đã bị chặn lại.";
+                            banner.classList.remove("hidden");
+                            showToast(`⚠️ Con vừa cố mở ứng dụng chưa xin phép: "${data.app_name}"`, "danger");
+                        } else if (data.type === "TASK_WAITING_APPROVAL") {
+                            showToast(`🏆 Bé đã hoàn thành: "${data.title}"! Hãy duyệt để thưởng +${data.reward_minutes} phút cho con.`, "success");
+                            fetchTasks();
+                        } else if (data.type === "REQUEST_DECIDED") {
+                            fetchRequests();
+                            fetchRules();
+                            fetchUsageStats();
+                        } else if (data.type === "USAGE_RESET" || data.type === "DAILY_RESET_TRIGGERED") {
+                            fetchUsageStats();
+                            fetchRules();
+                            fetchTasks();
+                        }
+                    } catch (e) {
+                        console.log("Raw WS message:", event.data);
+                    }
+                };
+
+                ws.onclose = () => {
+                    wsBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800";
+                    wsBadge.innerHTML = `<span class="w-2 h-2 mr-1.5 rounded-full bg-rose-500 animate-pulse"></span>Chưa kết nối Backend`;
+                    showServerNotice(true);
+                    setTimeout(initWebSocket, 3000);
+                };
+
+                ws.onerror = () => {
+                    showServerNotice(true);
+                    ws.close();
+                };
+            } catch (err) {
+                showServerNotice(true);
+                setTimeout(initWebSocket, 3000);
+            }
+        }
+
+        function showToast(message, type = "info") {
+            const container = document.getElementById("toast-container");
+            const toast = document.createElement("div");
+            let bg = "bg-blue-600";
+            if (type === "success") bg = "bg-emerald-600";
+            if (type === "danger") bg = "bg-rose-600";
+
+            toast.className = `toast ${bg} text-white px-4 py-3 rounded-xl shadow-lg flex justify-between items-center text-xs md:text-sm`;
+            toast.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove()" class="text-white hover:text-slate-200 ml-4 font-bold text-base">&times;</button>`;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 8000);
+        }
+
+        // Lệnh khóa / mở khóa máy
+        function sendLockCommand() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "LOCK_MACHINE" }));
+                showToast("🔒 Đã gửi lệnh khóa máy đến con!", "info");
+            } else {
+                alert("WebSocket chưa kết nối tới máy chủ!");
+            }
+        }
+
+        function sendUnlockCommand() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "UNLOCK_MACHINE" }));
+                showToast("🔓 Đã gửi lệnh mở khóa máy cho con!", "success");
+            } else {
+                alert("WebSocket chưa kết nối tới máy chủ!");
+            }
+        }
+
+        function sendMessageToChild() {
+            const input = document.getElementById("parent-message-input");
+            const msg = input.value.trim();
+            if (!msg) return alert("Vui lòng nhập lời nhắn!");
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "PARENT_MESSAGE", message: msg }));
+                showToast(`💬 Đã gửi lời nhắn: "${msg}"`, "info");
+                input.value = "";
+            } else {
+                alert("WebSocket chưa kết nối tới máy chủ!");
+            }
+        }
+
+        // 2. Yêu cầu từ trẻ
+        async function fetchRequests() {
+            const container = document.getElementById("requests-container");
+            try {
+                const response = await fetch(`${API_BASE}/requests/`);
+                if (!response.ok) throw new Error("HTTP error " + response.status);
+                const data = await response.json();
+                container.innerHTML = "";
+
+                if (data.length === 0) {
+                    container.innerHTML = "<p class='text-slate-400 text-xs italic py-4 text-center'>Hiện chưa có yêu cầu nào từ máy con.</p>";
+                    return;
+                }
+
+                data.forEach(req => {
+                    const card = document.createElement("div");
+                    card.className = "p-4 border rounded-xl transition bg-slate-50/50 hover:bg-slate-50 border-slate-200";
+
+                    let statusBadge = "";
+                    if (req.status === "PENDING") {
+                        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">🟡 Đang chờ duyệt</span>`;
+                    } else if (req.status === "APPROVED") {
+                        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">🟢 Đã cho phép</span>`;
+                    } else {
+                        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">🔴 Đã từ chối</span>`;
+                    }
+
+                    let typeLabel = "📩 Yêu cầu";
+                    if (req.request_type.includes("TIME")) typeLabel = "⏳ Xin thêm giờ";
+                    else if (req.request_type.includes("WEB")) typeLabel = "🌐 Xin phép mở Website";
+                    else if (req.request_type.includes("APP")) typeLabel = "📱 Xin phép mở Phần mềm";
+
+                    let actionHtml = "";
+                    if (req.status === "PENDING") {
+                        actionHtml = `
+                            <div class="mt-3 pt-3 border-t border-slate-200">
+                                <div class="flex flex-col sm:flex-row gap-2">
+                                    <input type="text" id="feedback-${req.id}" placeholder="Lời dặn dò cho con..." class="flex-1 text-xs border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <div class="flex gap-2">
+                                        <button onclick="handleDecision(${req.id}, 'APPROVED')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs shadow-sm transition">
+                                            ✅ Cho phép
+                                        </button>
+                                        <button onclick="handleDecision(${req.id}, 'REJECTED')" class="bg-rose-600 hover:bg-rose-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs shadow-sm transition">
+                                            ❌ Từ chối
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    } else if (req.parent_feedback) {
+                        actionHtml = `
+                            <div class="mt-2 text-xs text-slate-600 bg-white p-2 rounded-lg border border-slate-200">
+                                <span class="font-semibold text-slate-700">Lời nhắn từ Phụ huynh:</span> "${req.parent_feedback}"
+                            </div>
+                        `;
+                    }
+
+                    card.innerHTML = `
+                        <div class="flex items-start justify-between gap-2">
+                            <div>
+                                <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">${typeLabel}</span>
+                                <h4 class="font-bold text-slate-800 text-sm mt-0.5">${req.target_detail}</h4>
+                            </div>
+                            <div>${statusBadge}</div>
+                        </div>
+                        <p class="text-xs text-slate-600 mt-2 bg-white p-2.5 rounded-lg border border-slate-100">
+                            <span class="font-semibold text-slate-700">Lý do của con:</span> ${req.reason_from_child}
+                        </p>
+                        ${actionHtml}
+                    `;
+                    container.appendChild(card);
+                });
+            } catch (error) {
+                container.innerHTML = `<p class="text-rose-500 text-xs py-4 text-center">Lỗi khi tải dữ liệu: ${error.message}</p>`;
+            }
+        }
+
+        async function handleDecision(requestId, status) {
+            const feedbackInput = document.getElementById(`feedback-${requestId}`);
+            const feedback = feedbackInput ? feedbackInput.value.trim() : "";
+
+            try {
+                const response = await fetch(`${API_BASE}/requests/${requestId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        status: status,
+                        parent_feedback: feedback || (status === "APPROVED" ? "Cha mẹ đã đồng ý!" : "Cha mẹ chưa thể cho phép lúc này.")
+                    })
+                });
+
+                if (response.ok) {
+                    showToast(`Đã ${status === "APPROVED" ? "cho phép" : "từ chối"} yêu cầu #${requestId}!`, "success");
+                    fetchRequests();
+                    fetchRules();
+                    fetchUsageStats();
+                }
+            } catch (error) {
+                alert("Lỗi kết nối tới máy chủ: " + error.message);
+            }
+        }
+
+        // 3. Gamification: Nhiệm vụ & Việc tốt
+        async function fetchTasks() {
+            const container = document.getElementById("tasks-container");
+            try {
+                const res = await fetch(`${API_BASE}/tasks/`);
+                const tasks = await res.json();
+                container.innerHTML = "";
+
+                if (tasks.length === 0) {
+                    container.innerHTML = `<p class="text-slate-400 text-xs italic py-2 text-center">Chưa có nhiệm vụ nào được tạo.</p>`;
+                    return;
+                }
+
+                tasks.forEach(t => {
+                    const row = document.createElement("div");
+                    row.className = "p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3 text-xs";
+                    
+                    let statusBadge = "";
+                    let actionBtn = "";
+                    if (t.status === "TODO") {
+                        statusBadge = `<span class="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-semibold text-[10px]">⏳ Chờ con làm</span>`;
+                    } else if (t.status === "COMPLETED_WAITING_APPROVAL") {
+                        statusBadge = `<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px] animate-pulse">🟡 Đã xong (Chờ duyệt)</span>`;
+                        actionBtn = `<button onclick="approveTask(${t.id})" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs shadow-sm transition">✅ Duyệt & Thưởng +${t.reward_minutes}p</button>`;
+                    } else {
+                        statusBadge = `<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">🟢 Đã thưởng +${t.reward_minutes}p</span>`;
+                    }
+
+                    row.innerHTML = `
+                        <div class="flex items-center gap-2.5">
+                            <span class="text-base">🏆</span>
+                            <div>
+                                <h4 class="font-bold text-slate-800">${t.title}</h4>
+                                <p class="text-[11px] text-slate-500">${t.description || 'Không có mô tả'} • Thưởng: <strong>+${t.reward_minutes} phút</strong></p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            ${statusBadge}
+                            ${actionBtn}
+                            <button onclick="deleteTask(${t.id})" class="text-slate-400 hover:text-rose-600 text-xs font-semibold ml-1">&times;</button>
+                        </div>
+                    `;
+                    container.appendChild(row);
+                });
+            } catch (e) {
+                container.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center">Lỗi tải nhiệm vụ: ${e.message}</p>`;
+            }
+        }
+
+        async function createTask(e) {
+            e.preventDefault();
+            const title = document.getElementById("taskTitle").value.trim();
+            const reward = parseInt(document.getElementById("taskReward").value, 10);
+            if (!title) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/tasks/`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: title, reward_minutes: reward })
+                });
+                if (res.ok) {
+                    showToast(`Đã tạo nhiệm vụ "${title}" thành công!`, "success");
+                    document.getElementById("taskTitle").value = "";
+                    fetchTasks();
+                }
+            } catch (err) {
+                alert("Lỗi tạo nhiệm vụ: " + err.message);
+            }
+        }
+
+        async function approveTask(id) {
+            try {
+                const res = await fetch(`${API_BASE}/tasks/${id}/approve`, { method: "PATCH" });
+                if (res.ok) {
+                    showToast("Đã duyệt và cộng thêm phút sử dụng cho con!", "success");
+                    fetchTasks();
+                    fetchRules();
+                    fetchUsageStats();
+                }
+            } catch (err) {
+                alert("Lỗi duyệt nhiệm vụ: " + err.message);
+            }
+        }
+
+        async function deleteTask(id) {
+            if (!confirm("Bạn có chắc muốn xóa nhiệm vụ này?")) return;
+            try {
+                const res = await fetch(`${API_BASE}/tasks/${id}`, { method: "DELETE" });
+                if (res.ok) {
+                    showToast("Đã xóa nhiệm vụ!", "info");
+                    fetchTasks();
+                }
+            } catch (err) {
+                alert("Lỗi xóa nhiệm vụ: " + err.message);
+            }
+        }
+
+        // 4. Thống kê thời gian sử dụng & Giới hạn thời gian
+        async function fetchUsageStats() {
+            const listEl = document.getElementById("usage-list");
+            try {
+                const response = await fetch(`${API_BASE}/usage-stats/`);
+                const data = await response.json();
+
+                document.getElementById("stat-total-time").innerText = data.total_formatted;
+                document.getElementById("stat-learning-time").innerText = data.learning_formatted;
+                document.getElementById("stat-entertainment-time").innerText = data.entertainment_formatted;
+
+                cachedUsageItems = data.items;
+                renderUsageList(cachedUsageItems);
+            } catch (error) {
+                listEl.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center">Lỗi khi tải báo cáo: ${error.message}</p>`;
+            }
+        }
+
+        function filterUsage(tag, btn) {
+            document.querySelectorAll(".usage-filter-btn").forEach(b => {
+                b.className = "usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200";
+            });
+            btn.className = "usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-emerald-600 text-white";
+
+            if (tag === "ALL") {
+                renderUsageList(cachedUsageItems);
+            } else {
+                const filtered = cachedUsageItems.filter(item => item.tag === tag);
+                renderUsageList(filtered);
+            }
+        }
+
+        function renderUsageList(items) {
+            const listEl = document.getElementById("usage-list");
+            listEl.innerHTML = "";
+
+            if (items.length === 0) {
+                listEl.innerHTML = `<p class="text-slate-400 text-xs italic py-3 text-center">Không có ứng dụng nào trong danh mục này.</p>`;
+                return;
+            }
+
+            items.forEach(item => {
+                const row = document.createElement("div");
+                
+                let remColor = "text-emerald-700 bg-emerald-50 border-emerald-200";
+                let barColor = "bg-emerald-600";
+                if (item.is_expired) {
+                    remColor = "text-rose-700 bg-rose-50 border-rose-300 font-bold";
+                    barColor = "bg-rose-500";
+                } else if (item.remaining_minutes <= 15 && item.time_limit_minutes > 0) {
+                    remColor = "text-amber-700 bg-amber-50 border-amber-300 font-bold";
+                    barColor = "bg-amber-500";
+                }
+
+                row.className = `p-3 rounded-xl border flex flex-col gap-2 ${item.is_expired ? 'bg-rose-50/40 border-rose-200' : 'bg-slate-50 border-slate-200'}`;
+                row.innerHTML = `
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">${item.icon}</span>
+                            <span class="font-bold text-slate-800 text-xs md:text-sm">${item.app_name}</span>
+                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${item.badge_color}">${item.category}</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs">
+                            <span class="text-slate-500">Đã dùng: <strong>${item.duration_formatted}</strong></span>
+                            <span>•</span>
+                            <span class="text-[11px] px-2.5 py-0.5 rounded-full border ${remColor}">
+                                ${item.is_expired ? '🛑 Đã hết giờ (0p)' : '⏳ ' + item.remaining_formatted}
+                            </span>
+                            <button onclick="promptChangeLimit('${item.app_name}', ${item.time_limit_minutes})" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 bg-white border border-blue-200 rounded-lg shadow-sm">
+                                ⚙️ Cài giới hạn
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden flex-1">
+                            <div class="${barColor} h-full rounded-full transition-all" style="width: ${item.percentage}%"></div>
+                        </div>
+                        <span class="text-[10px] text-slate-400 w-8 text-right">${item.percentage}%</span>
+                    </div>
+                `;
+                listEl.appendChild(row);
+            });
+        }
+
+        async function promptChangeLimit(targetName, currentLimit) {
+            const input = prompt(`Đặt giới hạn thời gian cho "${targetName}" (nhập số phút, 0 = Không giới hạn):`, currentLimit);
+            if (input === null) return;
+            const mins = parseInt(input, 10);
+            if (isNaN(mins) || mins < 0) return alert("Vui lòng nhập một số phút hợp lệ!");
+
+            try {
+                const res = await fetch(`${API_BASE}/rules/`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        rule_type: targetName.includes(".") ? "WEBSITE" : "APP",
+                        target_value: targetName,
+                        action: "ALLOW",
+                        time_limit_minutes: mins
+                    })
+                });
+
+                if (res.ok) {
+                    showToast(`Đã đặt giới hạn cho "${targetName}": ${mins > 0 ? mins + ' phút' : 'Không giới hạn'}!`, "success");
+                    fetchUsageStats();
+                    fetchRules();
+                }
+            } catch (err) {
+                alert("Lỗi cài đặt giới hạn: " + err.message);
+            }
+        }
+
+        // 5. Quản lý Quy tắc Web & Phần mềm
+        async function fetchRules() {
+            const listEl = document.getElementById("rules-list");
+            try {
+                const res = await fetch(`${API_BASE}/rules/`);
+                const rules = await res.json();
+                listEl.innerHTML = "";
+
+                if (rules.length === 0) {
+                    listEl.innerHTML = `<p class="text-slate-400 text-xs italic col-span-full py-2 text-center">Chưa có quy tắc nào.</p>`;
+                    return;
+                }
+
+                rules.forEach(r => {
+                    const card = document.createElement("div");
+                    const isAllow = r.action === "ALLOW";
+                    const badgeBg = isAllow ? "bg-emerald-100 text-emerald-800 border-emerald-300" : "bg-rose-100 text-rose-800 border-rose-300";
+                    const badgeText = isAllow ? "Cho phép ✅" : "Chặn 🛑";
+                    const icon = r.rule_type === "WEBSITE" ? "🌐" : "📱";
+
+                    let remText = r.time_limit_minutes > 0 ? `${r.remaining_formatted}` : "Vô hạn";
+
+                    card.className = "p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs";
+                    card.innerHTML = `
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <span>${icon}</span>
+                            <div>
+                                <span class="font-bold text-slate-700 block truncate">${r.target_value}</span>
+                                <span class="text-[10px] text-slate-500">Giới hạn: ${r.time_limit_minutes > 0 ? r.time_limit_minutes + 'p' : 'Vô hạn'} (${remText})</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badgeBg}">${badgeText}</span>
+                            <button onclick="deleteRule('${r.id}')" class="text-slate-400 hover:text-rose-600 text-xs font-semibold px-1">
+                                Xóa
+                            </button>
+                        </div>
+                    `;
+                    listEl.appendChild(card);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<p class="text-rose-500 text-xs col-span-full">Lỗi tải quy tắc: ${e.message}</p>`;
+            }
+        }
+
+        async function addRule(e) {
+            e.preventDefault();
+            const type = document.getElementById("newRuleType").value;
+            const target = document.getElementById("newRuleValue").value.trim();
+            const action = document.getElementById("newRuleAction").value;
+            const limit = parseInt(document.getElementById("newRuleLimit").value, 10);
+
+            if (!target) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/rules/`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        rule_type: type,
+                        target_value: target,
+                        action: action,
+                        time_limit_minutes: limit
+                    })
+                });
+
+                if (res.ok) {
+                    showToast(`Đã thêm quy tắc cho "${target}"!`, "success");
+                    document.getElementById("newRuleValue").value = "";
+                    fetchRules();
+                    fetchUsageStats();
+                }
+            } catch (err) {
+                alert("Lỗi thêm quy tắc: " + err.message);
+            }
+        }
+
+        async function deleteRule(ruleId) {
+            if (!confirm("Bạn có chắc muốn xóa quy tắc này?")) return;
+            try {
+                const res = await fetch(`${API_BASE}/rules/${ruleId}`, { method: "DELETE" });
+                if (res.ok) {
+                    showToast("Đã xóa quy tắc thành công!", "info");
+                    fetchRules();
+                    fetchUsageStats();
+                }
+            } catch (err) {
+                alert("Lỗi xóa quy tắc: " + err.message);
+            }
+        }
+
+        // 6. Xử lý các chức năng Reset
+        async function handleReset(type) {
+            let confirmMsg = "";
+            let endpoint = "";
+
+            if (type === "daily") {
+                confirmMsg = "Bắt đầu ngày mới? Thời gian đã dùng sẽ về 0 và danh sách việc tốt hàng ngày sẽ được mở lại.";
+                endpoint = "/reset/daily";
+            } else if (type === "usage") {
+                confirmMsg = "Bạn có chắc muốn đặt lại toàn bộ thời gian sử dụng hôm nay về 0?";
+                endpoint = "/reset/usage";
+            } else if (type === "rules") {
+                confirmMsg = "Bạn có chắc muốn đặt lại tất cả quy tắc Web & App về mặc định?";
+                endpoint = "/reset/rules";
+            } else if (type === "requests") {
+                confirmMsg = "Bạn có chắc muốn làm sạch toàn bộ lịch sử yêu cầu?";
+                endpoint = "/reset/requests";
+            } else if (type === "all") {
+                confirmMsg = "CẢNH BÁO: Thao tác này sẽ khôi phục cài đặt gốc toàn bộ hệ thống. Bạn có muốn tiếp tục?";
+                endpoint = "/reset/all";
+            }
+
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                const res = await fetch(`${API_BASE}${endpoint}`, { method: "POST" });
+                const result = await res.json();
+                if (res.ok) {
+                    showToast(result.message || "Thao tác reset thành công!", "success");
+                    fetchUsageStats();
+                    fetchRules();
+                    fetchRequests();
+                    fetchTasks();
+                }
+            } catch (err) {
+                alert("Lỗi kết nối máy chủ: " + err.message);
+            }
+        }
+
+        // 7. Onboarding Modal Functions
+        function openOnboardingModal() {
+            document.getElementById("onboarding-modal").classList.remove("hidden");
+        }
+
+        function closeOnboardingModal() {
+            document.getElementById("onboarding-modal").classList.add("hidden");
+        }
+
+        async function saveOnboarding(e) {
+            e.preventDefault();
+            const learnM = parseInt(document.getElementById("obLearn").value, 10);
+            const entM = parseInt(document.getElementById("obEnt").value, 10);
+            const bedtime = document.getElementById("obBedtime").value;
+            const allowed = document.getElementById("obAllowed").value.split(",").map(s => s.trim()).filter(Boolean);
+            const blocked = document.getElementById("obBlocked").value.split(",").map(s => s.trim()).filter(Boolean);
+            const rawTasks = document.getElementById("obTasks").value.split(",").map(s => s.trim()).filter(Boolean);
+
+            const initialTasks = rawTasks.map(t => {
+                let reward = 15;
+                let title = t;
+                const match = t.match(/\((\d+)p?\)/);
+                if (match) {
+                    reward = parseInt(match[1], 10);
+                    title = t.replace(/\(\d+p?\)/, "").trim();
+                }
+                return { title: title, reward_minutes: reward, description: "Nhiệm vụ hàng ngày" };
+            });
+
+            const payload = {
+                learning_limit_minutes: learnM,
+                entertainment_limit_minutes: entM,
+                bedtime: bedtime,
+                allowed_sites: allowed,
+                blocked_sites: blocked,
+                initial_tasks: initialTasks
+            };
+
+            try {
+                const res = await fetch(`${API_BASE}/onboarding/setup`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                if (res.ok) {
+                    localStorage.setItem("onboarding_done", "true");
+                    closeOnboardingModal();
+                    showToast("🎉 Đã lưu cấu hình gốc thành công!", "success");
+                    fetchRules();
+                    fetchUsageStats();
+                    fetchTasks();
+                }
+            } catch (err) {
+                alert("Lỗi lưu cấu hình gốc: " + err.message);
+            }
+        }
+
+        // Khởi động
+        window.addEventListener("DOMContentLoaded", async () => {
+            await autoDetectBackendPort();
+            initWebSocket();
+            fetchRequests();
+            fetchTasks();
+            fetchUsageStats();
+            fetchRules();
+
+            // Mở Onboarding lần đầu nếu chưa thực hiện
+            if (!localStorage.getItem("onboarding_done")) {
+                setTimeout(openOnboardingModal, 800);
+            }
+        });
+    </script>
+</body>
+</html>

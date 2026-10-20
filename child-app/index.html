@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Góc Của Con - Child Dashboard 🛡️</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .toast {
+            animation: slideDown 0.3s ease-out;
+        }
+        @keyframes slideDown {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .pulse-subtle {
+            animation: pulseSubtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulseSubtle {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen p-4 md:p-8 text-slate-800">
+    <div class="max-w-4xl mx-auto space-y-6">
+        
+        <!-- HEADER -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                    <span>Góc Của Con</span> 🚀
+                </h1>
+                <p class="text-sm text-slate-500 mt-1">Khám phá an toàn • Tự giác rèn luyện • Đồng hành cùng Cha Mẹ</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <span id="realtime-clock" class="text-xs font-mono bg-slate-100 text-slate-700 px-3 py-1.5 rounded-xl border border-slate-200">
+                    --:--:--
+                </span>
+                <span id="ws-badge" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+                    <span class="w-2 h-2 mr-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    Đang kết nối...
+                </span>
+            </div>
+        </div>
+
+        <!-- Banner cảnh báo khi chưa kết nối Backend Server -->
+        <div id="server-offline-banner" class="hidden p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-900 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div class="flex items-start gap-3">
+                <span class="text-2xl">⚠️</span>
+                <div>
+                    <h4 class="font-bold text-sm text-amber-800">Chưa kết nối được tới Backend Server!</h4>
+                    <p class="text-xs text-amber-700 mt-0.5">
+                        Backend đang chạy tại cổng nào? Bạn có thể mở Terminal chạy: <code class="bg-amber-100 px-2 py-0.5 rounded font-mono text-amber-900 font-bold">source .venv/bin/activate && uvicorn backend.app.main:app --port 8008 --reload</code>
+                    </p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="text" id="custom-backend-url" placeholder="http://127.0.0.1:8008" class="text-xs border border-amber-300 rounded-xl px-2.5 py-1.5 bg-white text-slate-700 w-36 focus:outline-none">
+                <button onclick="changeBackendUrl()" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs whitespace-nowrap">Kết nối lại 🔄</button>
+            </div>
+        </div>
+
+        <!-- THÔNG BÁO TOAST & LỜI NHẮN TỪ PHỤ HUYNH -->
+        <div id="toast-container" class="space-y-2"></div>
+
+        <!-- BANNER THÔNG ĐIỆP TỪ CHA MẸ -->
+        <div id="parent-message-banner" class="hidden p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-indigo-900 flex items-start justify-between shadow-sm">
+            <div class="flex items-start gap-3">
+                <span class="text-2xl">💬</span>
+                <div>
+                    <h4 class="font-bold text-sm text-indigo-800">Lời nhắn từ Cha Mẹ:</h4>
+                    <p class="text-sm mt-0.5" id="parent-message-text"></p>
+                </div>
+            </div>
+            <button onclick="document.getElementById('parent-message-banner').classList.add('hidden')" class="text-indigo-400 hover:text-indigo-700 font-bold px-2">&times;</button>
+        </div>
+
+        <!-- CẢNH BÁO SỚM GRACEFUL SHUTDOWN (15m & 5m) -->
+        <div id="graceful-alert-15m" class="hidden p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-900 flex items-center justify-between shadow-md">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">🔔</span>
+                <div>
+                    <h4 class="font-bold text-sm text-amber-800">Nhắc nhở sớm: Con còn 15 phút!</h4>
+                    <p class="text-xs text-amber-700">Hãy chuẩn bị lưu lại bài tập hoặc các trang tài liệu đang học để không bị gián đoạn nhé.</p>
+                </div>
+            </div>
+            <button onclick="document.getElementById('graceful-alert-15m').classList.add('hidden')" class="bg-amber-200 hover:bg-amber-300 text-amber-900 font-semibold px-3 py-1 rounded-lg text-xs">Đã hiểu</button>
+        </div>
+
+        <div id="graceful-alert-5m" class="hidden p-4 bg-rose-50 border-2 border-rose-400 rounded-2xl text-rose-900 flex items-center justify-between shadow-lg animate-bounce">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">⚠️</span>
+                <div>
+                    <h4 class="font-bold text-sm text-rose-800">Cảnh báo khẩn cấp: Con chỉ còn 5 phút!</h4>
+                    <p class="text-xs text-rose-700">Vui lòng bấm lưu (Save) toàn bộ tài liệu học tập ngay bây giờ.</p>
+                </div>
+            </div>
+            <button onclick="document.getElementById('graceful-alert-5m').classList.add('hidden')" class="bg-rose-600 text-white hover:bg-rose-700 font-semibold px-3 py-1 rounded-lg text-xs">Lưu ngay</button>
+        </div>
+
+        <!-- KHUNG GIỜ GIỚI NGHIÊM (BEDTIME MODE) -->
+        <div id="bedtime-banner" class="hidden p-6 bg-slate-900 text-white rounded-2xl shadow-xl border border-slate-700 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-4">
+                <span class="text-4xl">🌙</span>
+                <div>
+                    <h3 class="text-lg font-bold text-amber-300">ĐÃ ĐẾN GIỜ ĐI NGỦ (Khung giờ giới nghiêm)</h3>
+                    <p class="text-xs text-slate-300 mt-1">Đã quá giờ giới nghiêm ban đêm. Hãy tắt máy tính, thư giãn mắt và đi ngủ để giữ gìn sức khỏe con nhé! 😴💤</p>
+                </div>
+            </div>
+            <span class="px-4 py-2 bg-slate-800 text-amber-300 text-xs font-semibold rounded-xl border border-slate-700">Giờ giới nghiêm: 22:00</span>
+        </div>
+
+        <!-- MÀN HÌNH KHÓA KHẨN CẤP TỪ CHA MẸ -->
+        <div id="lock-overlay" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl border border-slate-200">
+                <div class="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">
+                    🔒
+                </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-2">Máy tính đang tạm khóa!</h3>
+                <p class="text-sm text-slate-600 mb-6" id="lock-message-text">Cha mẹ vừa kích hoạt khóa máy tính từ xa. Con hãy nói chuyện trực tiếp với cha mẹ để mở lại nhé.</p>
+                <div class="p-3 bg-slate-50 rounded-xl text-xs text-slate-500">
+                    Ứng dụng sẽ tự động mở khóa ngay khi cha mẹ bấm mở từ Trạm điều khiển.
+                </div>
+            </div>
+        </div>
+
+        <!-- KHỐI 1: ĐỒNG HỒ ĐẾM NGƯỢC THỜI GIAN MINH BẠCH (COUNTDOWN TIMER) -->
+        <div class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-6 rounded-3xl shadow-lg relative overflow-hidden">
+            <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div>
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 backdrop-blur-sm text-white mb-2">
+                        ⏳ Đồng hồ thời gian hôm nay
+                    </span>
+                    <h2 class="text-2xl md:text-3xl font-extrabold tracking-tight">Thời Gian Sử Dụng Máy Tính</h2>
+                    <p class="text-xs text-blue-100 mt-1">Tự giác cân đối giữa Học tập 📚 và Giải trí 🎮</p>
+                </div>
+
+                <!-- Live ticking countdown box -->
+                <div class="flex items-center gap-4 bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20">
+                    <div class="text-center">
+                        <div class="text-xs uppercase tracking-wider text-blue-200 font-semibold mb-1">Thời gian còn lại</div>
+                        <div id="countdown-display" class="text-3xl md:text-4xl font-mono font-extrabold text-amber-300 tracking-wider">
+                            --:--:--
+                        </div>
+                        <div id="countdown-status" class="mt-1 text-xs font-semibold px-2 py-0.5 rounded-full inline-block bg-emerald-500/30 text-emerald-200">
+                            🟢 Thời gian an toàn
+                        </div>
+                    </div>
+                    <div class="border-l border-white/20 pl-4 text-xs text-blue-100 space-y-1">
+                        <div>Đã dùng: <span id="summary-used-time" class="font-bold text-white">0 phút</span></div>
+                        <div>Hạn mức: <span id="summary-limit-time" class="font-bold text-white">Không giới hạn</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Thanh tiến trình tổng thể -->
+            <div class="mt-6 relative z-10">
+                <div class="flex justify-between text-xs text-blue-100 mb-1">
+                    <span>Tiến độ sử dụng hôm nay</span>
+                    <span id="summary-percentage-text">0%</span>
+                </div>
+                <div class="w-full bg-white/20 rounded-full h-2.5 overflow-hidden">
+                    <div id="summary-progress-bar" class="bg-emerald-400 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- KHỐI 2: DANH SÁCH WEB & PHẦN MỀM ĐƯỢC PHÉP TRUY CẬP (ALLOWED TARGETS) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <span>🟢</span> Website & Phần Mềm Được Phép Sử Dụng
+                    </h2>
+                    <p class="text-xs text-slate-500">Bấm <strong>Mở trang web ↗</strong> để truy cập ngay trên trình duyệt mà không bị chặn</p>
+                </div>
+                <button onclick="fetchAllowedRules()" class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
+                    🔄 Làm mới
+                </button>
+            </div>
+
+            <div id="allowed-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="p-4 text-center text-slate-400 text-xs col-span-2">Đang tải danh sách được phép...</div>
+            </div>
+        </div>
+
+        <!-- KHỐI 3: THỐNG KÊ CHI TIẾT THỜI GIAN SỬ DỤNG THEO MỤC -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <span>📊</span> Bảng Thống Kê & Thời Gian Còn Lại
+                    </h2>
+                    <p class="text-xs text-slate-500">Phân loại theo Học tập, Giải trí, Mạng xã hội và Tiện ích</p>
+                </div>
+                <button onclick="fetchUsageStats()" class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
+                    🔄 Cập nhật
+                </button>
+            </div>
+
+            <!-- 4 Thẻ Phân Loại Nhanh -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                    <div class="text-emerald-700 font-bold text-xs flex items-center gap-1">📚 Học tập</div>
+                    <div id="stat-learning-time" class="text-base font-extrabold text-emerald-900 mt-1">0 phút</div>
+                </div>
+                <div class="p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                    <div class="text-rose-700 font-bold text-xs flex items-center gap-1">🎮 Giải trí</div>
+                    <div id="stat-entertainment-time" class="text-base font-extrabold text-rose-900 mt-1">0 phút</div>
+                </div>
+                <div class="p-3 bg-blue-50 border border-blue-200 rounded-xl">
+                    <div class="text-blue-700 font-bold text-xs flex items-center gap-1">💬 Mạng xã hội</div>
+                    <div id="stat-social-time" class="text-base font-extrabold text-blue-900 mt-1">0 phút</div>
+                </div>
+                <div class="p-3 bg-purple-50 border border-purple-200 rounded-xl">
+                    <div class="text-purple-700 font-bold text-xs flex items-center gap-1">🛠️ Tiện ích</div>
+                    <div id="stat-utilities-time" class="text-base font-extrabold text-purple-900 mt-1">0 phút</div>
+                </div>
+            </div>
+
+            <!-- Bảng danh sách mục -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-xs text-slate-400 border-b border-slate-100">
+                            <th class="py-2.5 font-medium">Tên Ứng dụng / Web</th>
+                            <th class="py-2.5 font-medium">Phân loại</th>
+                            <th class="py-2.5 font-medium">Đã dùng</th>
+                            <th class="py-2.5 font-medium">Giới hạn</th>
+                            <th class="py-2.5 font-medium">Thời gian còn lại</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usage-table-body" class="text-xs divide-y divide-slate-100">
+                        <tr><td colspan="5" class="py-4 text-center text-slate-400">Đang tải dữ liệu...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- KHỐI 4: ĐỔI VIỆC TỐT LẤY GIỜ CHƠI (GAMIFICATION) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <span>🏆</span> Việc Tốt Nhận Thưởng (Làm Việc Tốt - Đổi Giờ Chơi)
+                    </h2>
+                    <p class="text-xs text-slate-500">Hoàn thành bài tập hoặc việc nhà và bấm "Báo đã xong" để cha mẹ thưởng thêm thời gian</p>
+                </div>
+                <button onclick="fetchTasks()" class="inline-flex items-center gap-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
+                    🔄 Làm mới việc tốt
+                </button>
+            </div>
+
+            <div id="tasks-list" class="space-y-3">
+                <div class="p-4 text-center text-slate-400 text-xs">Đang tải danh sách việc tốt...</div>
+            </div>
+        </div>
+
+        <!-- KHỐI 5: XIN PHÉP & XIN THÊM GIỜ (CHILD REQUEST FORM) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h2 class="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
+                <span>🔓</span> Gửi Yêu Cầu Xin Phép Tới Cha Mẹ
+            </h2>
+            <p class="text-xs text-slate-500 mb-4">Cha mẹ sẽ nhận được thông báo ngay lập tức trên điện thoại hoặc máy tính của mình.</p>
+
+            <!-- Tabs -->
+            <div class="flex border-b border-slate-200 mb-4 text-xs font-semibold">
+                <button id="tab-btn-time" onclick="switchTab('time')" class="pb-2.5 px-4 text-blue-600 border-b-2 border-blue-600 transition">
+                    ⏳ Xin thêm giờ sử dụng
+                </button>
+                <button id="tab-btn-unlock" onclick="switchTab('unlock')" class="pb-2.5 px-4 text-slate-400 hover:text-slate-600 transition">
+                    🌐 Xin mở Web / Phần mềm mới
+                </button>
+            </div>
+
+            <!-- Form Xin thêm giờ -->
+            <div id="tab-content-time" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">Chọn số phút muốn xin thêm:</label>
+                    <div class="grid grid-cols-3 gap-3">
+                        <button type="button" onclick="selectTimeOption(15)" id="time-opt-15" class="py-2.5 px-3 rounded-xl border border-blue-500 bg-blue-50 text-blue-700 font-bold text-xs text-center transition">
+                            +15 Phút ⏱️
+                        </button>
+                        <button type="button" onclick="selectTimeOption(30)" id="time-opt-30" class="py-2.5 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 transition">
+                            +30 Phút ⏱️
+                        </button>
+                        <button type="button" onclick="selectTimeOption(60)" id="time-opt-60" class="py-2.5 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 transition">
+                            +60 Phút ⏱️
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Mục đích sử dụng thêm giờ:</label>
+                    <select id="time-category" class="w-full text-xs border border-slate-200 rounded-xl p-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="Học tập & Giáo dục">📚 Học tập & Làm bài tập</option>
+                        <option value="Giải trí & Game">🎮 Giải trí lành mạnh</option>
+                        <option value="Mạng xã hội & Chat">💬 Trao đổi bài tập với bạn</option>
+                        <option value="Công cụ & Tiện ích">🛠️ Công cụ làm dự án</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Lý do thuyết phục gửi cha mẹ:</label>
+                    <textarea id="time-reason" rows="2" placeholder="VD: Con sắp hoàn thành bài thuyết trình Lịch Sử, cần thêm 15 phút để nộp ạ..." class="w-full text-xs border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+
+                <button onclick="submitTimeRequest()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition flex items-center justify-center gap-1.5">
+                    <span>Gửi yêu cầu xin thêm giờ</span> 🚀
+                </button>
+            </div>
+
+            <!-- Form Xin mở khóa Web/App -->
+            <div id="tab-content-unlock" class="hidden space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Loại mục muốn mở khóa:</label>
+                        <select id="unlock-type" class="w-full text-xs border border-slate-200 rounded-xl p-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <option value="WEBSITE">🌐 Website (Trang web)</option>
+                            <option value="APP">💻 Phần mềm (Ứng dụng máy tính)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Gắn nhãn phân loại:</label>
+                        <select id="unlock-category" class="w-full text-xs border border-slate-200 rounded-xl p-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <option value="Học tập & Giáo dục">📚 Học tập & Giáo dục</option>
+                            <option value="Giải trí & Game">🎮 Giải trí & Game</option>
+                            <option value="Mạng xã hội & Chat">💬 Mạng xã hội & Chat</option>
+                            <option value="Công cụ & Tiện ích">🛠️ Công cụ & Tiện ích</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Địa chỉ Web hoặc Tên phần mềm:</label>
+                    <input type="text" id="unlock-target" placeholder="VD: quizlet.com hoặc scratch.mit.edu hoặc blender.exe" class="w-full text-xs border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Thời gian xin mở (phút):</label>
+                    <input type="number" id="unlock-minutes" value="30" min="5" max="180" class="w-full text-xs border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Lý do xin mở:</label>
+                    <textarea id="unlock-reason" rows="2" placeholder="VD: Con cần ôn từ vựng tiếng Anh cho bài kiểm tra ngày mai ạ..." class="w-full text-xs border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"></textarea>
+                </div>
+
+                <button onclick="submitUnlockRequest()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition flex items-center justify-center gap-1.5">
+                    <span>Gửi yêu cầu xin mở khóa</span> 📨
+                </button>
+            </div>
+        </div>
+
+        <!-- KHỐI 6: LỊCH SỬ YÊU CẦU & LỜI PHẢN HỒI TỪ CHA MẸ -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <span>📋</span> Hộp Thư & Phản Hồi Từ Cha Mẹ
+                    </h2>
+                    <p class="text-xs text-slate-500">Xem tiến độ phê duyệt và lời dặn dò của cha mẹ</p>
+                </div>
+                <button onclick="fetchChildRequests()" class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
+                    🔄 Tải lại
+                </button>
+            </div>
+
+            <div id="requests-history-list" class="space-y-3">
+                <div class="p-4 text-center text-slate-400 text-xs">Đang tải lịch sử yêu cầu...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- JAVASCRIPT LOGIC -->
+    <script>
+        let API_BASE = "http://127.0.0.1:8008";
+        let WS_URL = "ws://127.0.0.1:8008/ws/agent/child_web_client";
+
+        if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+            const host = window.location.hostname || "127.0.0.1";
+            const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
+            const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+            API_BASE = `${window.location.protocol}//${host}${window.location.port ? ':' + window.location.port : ''}`;
+            WS_URL = `${wsProto}//${host}${window.location.port ? ':' + window.location.port : ''}/ws/agent/child_web_client`;
+        }
+
+        let selectedMinutes = 15;
+        let ws = null;
+        let countdownSeconds = 0;
+        let countdownInterval = null;
+        let alert15Shown = false;
+        let alert5Shown = false;
+
+        async function autoDetectBackendPort() {
+            if (window.location.protocol === "file:") {
+                const ports = [8008, 8000, 8001, 8080];
+                for (const p of ports) {
+                    try {
+                        const res = await fetch(`http://127.0.0.1:${p}/`, { signal: AbortSignal.timeout(400) });
+                        if (res.ok) {
+                            API_BASE = `http://127.0.0.1:${p}`;
+                            WS_URL = `ws://127.0.0.1:${p}/ws/agent/child_web_client`;
+                            const customInput = document.getElementById("custom-backend-url");
+                            if (customInput) customInput.value = API_BASE;
+                            return true;
+                        }
+                    } catch (e) {}
+                }
+            }
+            return false;
+        }
+
+        function changeBackendUrl() {
+            const input = document.getElementById("custom-backend-url");
+            if (input && input.value.trim()) {
+                let target = input.value.trim();
+                if (!target.startsWith("http")) target = "http://" + target;
+                API_BASE = target;
+                const wsHost = target.replace("http://", "").replace("https://", "");
+                WS_URL = `ws://${wsHost}/ws/agent/child_web_client`;
+            }
+            initWebSocket();
+            fetchAllowedRules();
+            fetchUsageStats();
+            fetchTasks();
+            fetchChildRequests();
+        }
+
+        function showServerNotice(show) {
+            const banner = document.getElementById("server-offline-banner");
+            if (banner) {
+                if (show) banner.classList.remove("hidden");
+                else banner.classList.add("hidden");
+            }
+            const customInput = document.getElementById("custom-backend-url");
+            if (customInput && !customInput.value) {
+                customInput.value = API_BASE;
+            }
+        }
+
+        // --- ĐỒNG HỒ THỜI GIAN THỰC ---
+        function updateRealtimeClock() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('vi-VN');
+            const dateStr = now.toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' });
+            document.getElementById('realtime-clock').textContent = `${timeStr} | ${dateStr}`;
+        }
+        setInterval(updateRealtimeClock, 1000);
+        updateRealtimeClock();
+
+        // --- WEBSOCKET REAL-TIME CONNECTION ---
+        function initWebSocket() {
+            const badge = document.getElementById("ws-badge");
+            try {
+                ws = new WebSocket(WS_URL);
+
+                ws.onopen = () => {
+                    badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800";
+                    badge.innerHTML = '<span class="w-2 h-2 mr-1.5 rounded-full bg-emerald-500"></span>Đã kết nối';
+                    showServerNotice(false);
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleWsMessage(data);
+                    } catch (e) {
+                        console.log("Raw WS message:", event.data);
+                    }
+                };
+
+                ws.onclose = () => {
+                    badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800";
+                    badge.innerHTML = '<span class="w-2 h-2 mr-1.5 rounded-full bg-rose-500 animate-pulse"></span>Chưa kết nối Backend';
+                    showServerNotice(true);
+                    setTimeout(initWebSocket, 3000);
+                };
+
+                ws.onerror = () => {
+                    showServerNotice(true);
+                    ws.close();
+                };
+            } catch (err) {
+                showServerNotice(true);
+                setTimeout(initWebSocket, 3000);
+            }
+        }
+
+        function handleWsMessage(data) {
+            const type = data.type || "";
+
+            if (type === "LOCK_MACHINE") {
+                document.getElementById("lock-message-text").textContent = data.message || "Cha mẹ vừa kích hoạt khóa máy tính từ xa.";
+                document.getElementById("lock-overlay").classList.remove("hidden");
+                showToast("🔒 Máy tính đã bị khóa bởi Cha Mẹ!", "rose");
+            } else if (type === "UNLOCK_MACHINE") {
+                document.getElementById("lock-overlay").classList.add("hidden");
+                showToast("🔓 Máy tính đã được mở khóa!", "emerald");
+            } else if (type === "PARENT_MESSAGE") {
+                document.getElementById("parent-message-text").textContent = data.message;
+                document.getElementById("parent-message-banner").classList.remove("hidden");
+                showToast("💬 Lời nhắn mới từ Cha Mẹ!", "indigo");
+            } else if (type === "TASK_APPROVED_REWARD") {
+                showToast(`🎉 Cha mẹ đã duyệt việc tốt: "${data.title}" (+${data.reward_minutes} phút)!`, "amber");
+                fetchTasks();
+                fetchUsageStats();
+            } else if (type === "REQUEST_DECIDED") {
+                const req = data.data;
+                const statusTxt = req.status === "APPROVED" ? "✅ ĐÃ ĐỒNG Ý" : "❌ CHƯA ĐỒNG Ý";
+                showToast(`Cha Mẹ ${statusTxt} yêu cầu: ${req.target_detail}`, req.status === "APPROVED" ? "emerald" : "rose");
+                fetchChildRequests();
+                fetchAllowedRules();
+                fetchUsageStats();
+            } else if (type === "DAILY_RESET_TRIGGERED") {
+                showToast("🌅 Chào ngày mới! Thời gian và việc tốt đã được làm mới tự động.", "emerald");
+                fetchAllowedRules();
+                fetchUsageStats();
+                fetchTasks();
+                fetchChildRequests();
+            } else if (type === "USAGE_RESET" || type === "RULES_RESET" || type === "FULL_RESET" || type === "ONBOARDING_UPDATED" || type === "LIMIT_UPDATED") {
+                showToast("⚙️ Dữ liệu hệ thống vừa được cập nhật!", "blue");
+                fetchAllowedRules();
+                fetchUsageStats();
+                fetchChildRequests();
+            }
+        }
+
+        // --- TOAST NOTIFICATIONS ---
+        function showToast(message, color = "blue") {
+            const container = document.getElementById("toast-container");
+            const toast = document.createElement("div");
+            
+            const colorClasses = {
+                emerald: "bg-emerald-600 text-white",
+                rose: "bg-rose-600 text-white",
+                amber: "bg-amber-600 text-white",
+                indigo: "bg-indigo-600 text-white",
+                blue: "bg-blue-600 text-white"
+            };
+
+            toast.className = `toast p-3 rounded-xl text-xs font-semibold shadow-md flex items-center justify-between ${colorClasses[color] || colorClasses.blue}`;
+            toast.innerHTML = `
+                <span>${message}</span>
+                <button onclick="this.parentElement.remove()" class="ml-2 font-bold opacity-80 hover:opacity-100">&times;</button>
+            `;
+            container.appendChild(toast);
+            setTimeout(() => {
+                if (toast.parentElement) toast.remove();
+            }, 6000);
+        }
+
+        // --- TABS CHUYỂN ĐỔI FORM ---
+        function switchTab(tab) {
+            const btnTime = document.getElementById("tab-btn-time");
+            const btnUnlock = document.getElementById("tab-btn-unlock");
+            const contentTime = document.getElementById("tab-content-time");
+            const contentUnlock = document.getElementById("tab-content-unlock");
+
+            if (tab === "time") {
+                btnTime.className = "pb-2.5 px-4 text-blue-600 border-b-2 border-blue-600 transition font-bold";
+                btnUnlock.className = "pb-2.5 px-4 text-slate-400 hover:text-slate-600 transition";
+                contentTime.classList.remove("hidden");
+                contentUnlock.classList.add("hidden");
+            } else {
+                btnUnlock.className = "pb-2.5 px-4 text-emerald-600 border-b-2 border-emerald-600 transition font-bold";
+                btnTime.className = "pb-2.5 px-4 text-slate-400 hover:text-slate-600 transition";
+                contentUnlock.classList.remove("hidden");
+                contentTime.classList.add("hidden");
+            }
+        }
+
+        function selectTimeOption(mins) {
+            selectedMinutes = mins;
+            [15, 30, 60].forEach(m => {
+                const el = document.getElementById(`time-opt-${m}`);
+                if (m === mins) {
+                    el.className = "py-2.5 px-3 rounded-xl border border-blue-500 bg-blue-50 text-blue-700 font-bold text-xs text-center transition";
+                } else {
+                    el.className = "py-2.5 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 transition";
+                }
+            });
+        }
+
+        // --- SUBMIT FORM YÊU CẦU ---
+        async function submitTimeRequest() {
+            const reason = document.getElementById("time-reason").value.trim();
+            const category = document.getElementById("time-category").value;
+
+            if (!reason) {
+                alert("Vui lòng nhập lý do xin thêm giờ để cha mẹ hiểu nhé!");
+                return;
+            }
+
+            const payload = {
+                request_type: "TIME_EXTENSION",
+                target_detail: `Xin thêm ${selectedMinutes} phút`,
+                category: category,
+                requested_minutes: selectedMinutes,
+                reason_from_child: reason
+            };
+
+            try {
+                const res = await fetch(`${API_BASE}/requests/`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    showToast(`Đã gửi yêu cầu xin thêm ${selectedMinutes} phút tới Cha Mẹ! 🚀`, "blue");
+                    document.getElementById("time-reason").value = "";
+                    fetchChildRequests();
+                } else {
+                    alert("Không thể gửi yêu cầu, vui lòng thử lại!");
+                }
+            } catch (err) {
+                alert("Lỗi kết nối tới máy chủ Backend!");
+            }
+        }
+
+        async function submitUnlockRequest() {
+            const targetType = document.getElementById("unlock-type").value;
+            const target = document.getElementById("unlock-target").value.trim();
+            const category = document.getElementById("unlock-category").value;
+            const minutes = parseInt(document.getElementById("unlock-minutes").value) || 30;
+            const reason = document.getElementById("unlock-reason").value.trim();
+
+            if (!target || !reason) {
+                alert("Vui lòng nhập tên Web/Phần mềm và lý do xin mở!");
+                return;
+            }
+
+            const payload = {
+                request_type: `PERMISSION_${targetType}`,
+                target_detail: target,
+                category: category,
+                requested_minutes: minutes,
+                reason_from_child: reason
+            };
+
+            try {
+                const res = await fetch(`${API_BASE}/requests/`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    showToast(`Đã gửi yêu cầu xin mở "${target}" tới Cha Mẹ! 📨`, "emerald");
+                    document.getElementById("unlock-target").value = "";
+                    document.getElementById("unlock-reason").value = "";
+                    fetchChildRequests();
+                } else {
+                    alert("Không thể gửi yêu cầu, vui lòng thử lại!");
+                }
+            } catch (err) {
+                alert("Lỗi kết nối tới máy chủ Backend!");
+            }
+        }
+
+        // --- TẢI DANH SÁCH QUY TẮC ĐƯỢC PHÉP (ALLOWED RULES) ---
+        async function fetchAllowedRules() {
+            try {
+                const res = await fetch(`${API_BASE}/rules/`);
+                if (!res.ok) return;
+                const rules = await res.json();
+                const container = document.getElementById("allowed-list");
+
+                const allowed = rules.filter(r => r.action === "ALLOW");
+
+                if (allowed.length === 0) {
+                    container.innerHTML = `<div class="p-4 text-center text-slate-400 text-xs col-span-2">Chưa có trang web hoặc ứng dụng nào được mở khóa. Hãy gửi yêu cầu xin phép ở bên dưới!</div>`;
+                    return;
+                }
+
+                container.innerHTML = allowed.map(r => {
+                    const isWeb = r.rule_type === "WEBSITE" || r.target_value.includes(".");
+                    const icon = isWeb ? "🌐" : "💻";
+                    const webUrl = r.target_value.startsWith("http") ? r.target_value : `https://${r.target_value}`;
+                    
+                    const remBadgeClass = r.is_expired ? "bg-rose-100 text-rose-800" : (r.remaining_minutes <= 15 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800");
+
+                    return `
+                        <div class="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:bg-slate-100/70 transition">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-lg shadow-xs">
+                                    ${icon}
+                                </div>
+                                <div>
+                                    <div class="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                                        <span>${r.target_value}</span>
+                                        <span class="text-[10px] px-1.5 py-0.2 rounded font-semibold ${remBadgeClass}">
+                                            ${r.remaining_formatted}
+                                        </span>
+                                    </div>
+                                    <div class="text-[11px] text-slate-400 mt-0.5">
+                                        Đã dùng: ${r.used_minutes}p / Giới hạn: ${r.time_limit_minutes > 0 ? r.time_limit_minutes + 'p' : 'Không GH'}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                ${isWeb ? `
+                                    <a href="${webUrl}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                        <span>Mở trang web</span> ↗
+                                    </a>
+                                ` : `
+                                    <span class="text-[11px] px-2.5 py-1 bg-slate-200 text-slate-700 rounded-lg font-medium">Đã mở khóa</span>
+                                `}
+                            </div>
+                        </div>
+                    `;
+                }).join("");
+
+            } catch (err) {
+                console.error("Lỗi nạp rules:", err);
+            }
+        }
+
+        // --- ĐỒNG HỒ ĐẾM NGƯỢC TICKING & CẢNH BÁO GRACEFUL SHUTDOWN ---
+        function startCountdown(remainingMins) {
+            if (countdownInterval) clearInterval(countdownInterval);
+
+            countdownSeconds = Math.max(0, remainingMins * 60);
+
+            function updateDisplay() {
+                const hours = Math.floor(countdownSeconds / 3600);
+                const minutes = Math.floor((countdownSeconds % 3600) / 60);
+                const seconds = countdownSeconds % 60;
+
+                const formatted = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                document.getElementById("countdown-display").textContent = formatted;
+
+                const statusEl = document.getElementById("countdown-status");
+
+                if (countdownSeconds <= 0) {
+                    statusEl.className = "mt-1 text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block bg-rose-500 text-white animate-pulse";
+                    statusEl.textContent = "🔴 Đã hết thời gian!";
+                } else if (countdownSeconds <= 5 * 60) {
+                    statusEl.className = "mt-1 text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block bg-rose-500/30 text-rose-200 animate-pulse";
+                    statusEl.textContent = "⚠️ Sắp hết giờ (Còn dưới 5 phút!)";
+                    if (!alert5Shown) {
+                        document.getElementById("graceful-alert-5m").classList.remove("hidden");
+                        alert5Shown = true;
+                    }
+                } else if (countdownSeconds <= 15 * 60) {
+                    statusEl.className = "mt-1 text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block bg-amber-500/30 text-amber-200";
+                    statusEl.textContent = "🟡 Chuẩn bị hết giờ (Còn dưới 15 phút)";
+                    if (!alert15Shown) {
+                        document.getElementById("graceful-alert-15m").classList.remove("hidden");
+                        alert15Shown = true;
+                    }
+                } else {
+                    statusEl.className = "mt-1 text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block bg-emerald-500/30 text-emerald-200";
+                    statusEl.textContent = "🟢 Thời gian an toàn";
+                }
+
+                if (countdownSeconds > 0) {
+                    countdownSeconds--;
+                }
+            }
+
+            updateDisplay();
+            countdownInterval = setInterval(updateDisplay, 1000);
+        }
+
+        // --- TẢI DỮ LIỆU THỐNG KÊ SỬ DỤNG (USAGE STATS) ---
+        async function fetchUsageStats() {
+            try {
+                const res = await fetch(`${API_BASE}/usage-stats/`);
+                if (!res.ok) return;
+                const data = await res.json();
+
+                // Thống kê nhanh
+                document.getElementById("stat-learning-time").textContent = data.learning_formatted || "0 phút";
+                document.getElementById("stat-entertainment-time").textContent = data.entertainment_formatted || "0 phút";
+                document.getElementById("stat-social-time").textContent = data.social_formatted || "0 phút";
+                document.getElementById("stat-utilities-time").textContent = data.utilities_formatted || "0 phút";
+
+                document.getElementById("summary-used-time").textContent = data.total_formatted;
+
+                // Kiểm tra Bedtime
+                const bedtimeBanner = document.getElementById("bedtime-banner");
+                if (data.is_bedtime) {
+                    bedtimeBanner.classList.remove("hidden");
+                } else {
+                    bedtimeBanner.classList.add("hidden");
+                }
+
+                // Tính toán thời gian còn lại trung bình từ các mục
+                let minRemaining = 120;
+                let hasLimit = false;
+
+                if (data.items && data.items.length > 0) {
+                    const limitedItems = data.items.filter(i => i.time_limit_minutes > 0);
+                    if (limitedItems.length > 0) {
+                        hasLimit = true;
+                        minRemaining = Math.min(...limitedItems.map(i => i.remaining_minutes));
+                    }
+                }
+
+                if (hasLimit) {
+                    document.getElementById("summary-limit-time").textContent = `${Math.max(0, minRemaining)} phút còn lại`;
+                    startCountdown(minRemaining);
+                } else {
+                    document.getElementById("summary-limit-time").textContent = "Không giới hạn";
+                    startCountdown(120);
+                }
+
+                // Tiến độ phần trăm
+                const pct = Math.min(100, Math.round((data.total_minutes / 180) * 100));
+                document.getElementById("summary-percentage-text").textContent = `${pct}% hạn mức ngày`;
+                const pBar = document.getElementById("summary-progress-bar");
+                pBar.style.width = `${pct}%`;
+                pBar.className = pct >= 90 ? "bg-rose-400 h-2.5 rounded-full transition-all duration-500" : (pct >= 60 ? "bg-amber-400 h-2.5 rounded-full transition-all duration-500" : "bg-emerald-400 h-2.5 rounded-full transition-all duration-500");
+
+                // Bảng chi tiết
+                const tbody = document.getElementById("usage-table-body");
+                if (!data.items || data.items.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" class="py-4 text-center text-slate-400">Chưa có dữ liệu hoạt động.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = data.items.map(item => `
+                    <tr class="hover:bg-slate-50">
+                        <td class="py-2.5 font-semibold text-slate-800 flex items-center gap-2">
+                            <span>${item.icon || '📱'}</span>
+                            <span>${item.app_name}</span>
+                        </td>
+                        <td class="py-2.5">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${item.badge_color}">
+                                ${item.category}
+                            </span>
+                        </td>
+                        <td class="py-2.5 font-medium text-slate-600">${item.duration_formatted}</td>
+                        <td class="py-2.5 text-slate-500">${item.time_limit_minutes > 0 ? item.time_limit_minutes + ' phút' : 'Không GH'}</td>
+                        <td class="py-2.5 font-bold ${item.is_expired ? 'text-rose-600' : (item.remaining_minutes <= 15 ? 'text-amber-600' : 'text-emerald-600')}">
+                            ${item.remaining_formatted}
+                        </td>
+                    </tr>
+                `).join("");
+
+            } catch (err) {
+                console.error("Lỗi nạp usage stats:", err);
+            }
+        }
+
+        // --- TẢI DANH SÁCH VIỆC TỐT (GAMIFICATION) ---
+        async function fetchTasks() {
+            try {
+                const res = await fetch(`${API_BASE}/tasks/`);
+                if (!res.ok) return;
+                const tasks = await res.json();
+                const container = document.getElementById("tasks-list");
+
+                if (tasks.length === 0) {
+                    container.innerHTML = `<div class="p-4 text-center text-slate-400 text-xs">Hiện chưa có việc tốt nào. Cha mẹ sẽ thêm việc tốt tại trạm điều khiển!</div>`;
+                    return;
+                }
+
+                container.innerHTML = tasks.map(t => {
+                    let actionHtml = "";
+                    if (t.status === "TODO") {
+                        actionHtml = `
+                            <button onclick="markTaskDone(${t.id})" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1">
+                                <span>Báo đã làm xong</span> 🏆
+                            </button>
+                        `;
+                    } else if (t.status === "COMPLETED_WAITING_APPROVAL") {
+                        actionHtml = `
+                            <span class="px-3 py-1 bg-amber-100 text-amber-800 rounded-xl text-xs font-semibold">
+                                Đang chờ cha mẹ duyệt ⏳
+                            </span>
+                        `;
+                    } else if (t.status === "APPROVED") {
+                        actionHtml = `
+                            <span class="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold">
+                                Đã nhận +${t.reward_minutes} phút 🎉
+                            </span>
+                        `;
+                    }
+
+                    return `
+                        <div class="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:bg-slate-100/70 transition">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-lg font-bold">
+                                    +${t.reward_minutes}p
+                                </div>
+                                <div>
+                                    <div class="font-bold text-xs text-slate-800">${t.title}</div>
+                                    <div class="text-[11px] text-slate-400 mt-0.5">${t.description || "Làm tốt để nhận thêm giờ chơi!"}</div>
+                                </div>
+                            </div>
+                            <div>
+                                ${actionHtml}
+                            </div>
+                        </div>
+                    `;
+                }).join("");
+
+            } catch (err) {
+                console.error("Lỗi nạp tasks:", err);
+            }
+        }
+
+        async function markTaskDone(taskId) {
+            try {
+                const res = await fetch(`${API_BASE}/tasks/${taskId}/complete`, {
+                    method: "PATCH"
+                });
+                if (res.ok) {
+                    showToast("🎉 Giỏi lắm! Đã báo hoàn thành việc tốt cho Cha Mẹ.", "amber");
+                    fetchTasks();
+                } else {
+                    alert("Không thể cập nhật việc tốt.");
+                }
+            } catch (err) {
+                alert("Lỗi kết nối máy chủ!");
+            }
+        }
+
+        // --- TẢI LỊCH SỬ YÊU CẦU & PHẢN HỒI ---
+        async function fetchChildRequests() {
+            try {
+                const res = await fetch(`${API_BASE}/requests/`);
+                if (!res.ok) return;
+                const requests = await res.json();
+                const container = document.getElementById("requests-history-list");
+
+                if (requests.length === 0) {
+                    container.innerHTML = `<div class="p-4 text-center text-slate-400 text-xs">Chưa có yêu cầu nào được gửi.</div>`;
+                    return;
+                }
+
+                container.innerHTML = requests.map(r => {
+                    let statusBadge = "";
+                    if (r.status === "APPROVED") {
+                        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ ĐÃ ĐỒNG Ý</span>`;
+                    } else if (r.status === "REJECTED") {
+                        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">❌ CHƯA ĐỒNG Ý</span>`;
+                    } else {
+                        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">⏳ ĐANG CHỜ PHẢN HỒI</span>`;
+                    }
+
+                    return `
+                        <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                            <div class="flex items-center justify-between">
+                                <span class="font-bold text-xs text-slate-800">${r.target_detail}</span>
+                                ${statusBadge}
+                            </div>
+                            <div class="text-[11px] text-slate-500 italic">
+                                "Lý do của con: ${r.reason_from_child || 'Không có lý do'}"
+                            </div>
+                            ${r.parent_feedback ? `
+                                <div class="mt-1 pt-1.5 border-t border-slate-200 text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
+                                    <span>💬 Cha Mẹ dặn:</span>
+                                    <span>"${r.parent_feedback}"</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                }).join("");
+
+            } catch (err) {
+                console.error("Lỗi nạp requests:", err);
+            }
+        }
+
+        // --- KHỞI TẠO BAN ĐẦU ---
+        window.addEventListener("DOMContentLoaded", async () => {
+            await autoDetectBackendPort();
+            initWebSocket();
+            fetchAllowedRules();
+            fetchUsageStats();
+            fetchTasks();
+            fetchChildRequests();
+
+            // Định kỳ cập nhật dữ liệu ngầm mỗi 10 giây
+            setInterval(() => {
+                fetchAllowedRules();
+                fetchUsageStats();
+            }, 10000);
+        });
+    </script>
+</body>
+</html>
