@@ -1,12 +1,16 @@
 import os
 import asyncio
+import time
+import random
+import string
+import hashlib
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 import json
 import uuid
 from . import database, models, schemas
@@ -14,6 +18,45 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Tự động tạo bảng database nếu chưa tồn tại
 models.Base.metadata.create_all(bind=database.engine)
+
+def auto_migrate_db():
+    """Tự động bổ sung các cột mới vào SQLite nếu chưa có."""
+    import sqlite3
+    try:
+        conn = sqlite3.connect(database.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(devices)")
+        cols = [row[1] for row in cursor.fetchall()]
+        if cols:
+            device_cols = {
+                "user_id": "VARCHAR(50)",
+                "device_hwid": "VARCHAR(100)",
+                "pairing_code": "VARCHAR(20)",
+                "pairing_token": "VARCHAR(100)",
+                "is_paired": "BOOLEAN DEFAULT 0",
+                "child_profile_id": "INTEGER",
+                "platform": "VARCHAR(50) DEFAULT 'Linux'",
+                "ip_address": "VARCHAR(50)",
+                "anti_tamper_active": "BOOLEAN DEFAULT 1",
+                "content_filter_active": "BOOLEAN DEFAULT 1",
+                "last_seen": "DATETIME",
+                "created_at": "DATETIME DEFAULT CURRENT_TIMESTAMP"
+            }
+            for col_name, col_type in device_cols.items():
+                if col_name not in cols:
+                    cursor.execute(f"ALTER TABLE devices ADD COLUMN {col_name} {col_type}")
+
+        cursor.execute("PRAGMA table_info(alert_logs)")
+        alert_cols = [row[1] for row in cursor.fetchall()]
+        if alert_cols and "category" not in alert_cols:
+            cursor.execute("ALTER TABLE alert_logs ADD COLUMN category VARCHAR(50) DEFAULT 'UNAPPROVED_ACCESS'")
+
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+auto_migrate_db()
 
 app = FastAPI(title="Parental Control Backend", version="1.3.0")
 
@@ -387,6 +430,298 @@ async def remote_message(payload: dict):
         "message": msg
     })
     return {"status": "success", "message": "Đã gửi thông điệp tới máy con!"}
+
+# ==========================================
+# 0.1. QUẢN LÝ THIẾT BỊ, GHÉP NỐI & CLOUD RELAY (WAN SYNC)
+# ==========================================
+def generate_pairing_code() -> str:
+    """Tạo mã ghép nối ngẫu nhiên 6 ký tự dễ đọc (VD: MMT-8942)."""
+    digits = ''.join(random.choices(string.digits, k=4))
+    return f"MMT-{digits}"
+
+@app.post("/devices/create", response_model=schemas.DeviceResponse)
+async def create_device_profile(dev_data: schemas.DeviceCreateRequest, db: Session = Depends(database.get_db)):
+    """Phụ huynh tạo hồ sơ thiết bị cho con và thiết lập quy tắc ban đầu."""
+    # Sinh mã ghép nối duy nhất
+    code = generate_pairing_code()
+    for _ in range(10):
+        if not db.query(models.Device).filter(models.Device.pairing_code == code).first():
+            break
+        code = generate_pairing_code()
+
+    new_dev = models.Device(
+        device_name=dev_data.device_name.strip(),
+        pairing_code=code,
+        child_profile_id=dev_data.child_profile_id,
+        status="PENDING_PAIR",
+        is_paired=False,
+        anti_tamper_active=True,
+        content_filter_active=True
+    )
+    db.add(new_dev)
+    db.commit()
+    db.refresh(new_dev)
+
+    # Thêm các quy tắc web/game chặn ban đầu nếu phụ huynh chọn
+    if dev_data.blocked_items:
+        for item in dev_data.blocked_items:
+            clean = extract_target_name(item)
+            if clean:
+                r_type = "WEBSITE" if "." in clean else "APP"
+                existing = db.query(models.AppWebRule).filter(models.AppWebRule.target_value == clean).first()
+                if not existing:
+                    db.add(models.AppWebRule(
+                        device_id=new_dev.id,
+                        rule_type=r_type,
+                        target_value=clean,
+                        action="BLOCK",
+                        time_limit_minutes=30,
+                        used_minutes=0
+                    ))
+        db.commit()
+
+    # Cập nhật hạn mức cho hồ sơ con nếu có
+    if dev_data.child_profile_id:
+        child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev_data.child_profile_id).first()
+        if child and dev_data.daily_limit_minutes:
+            child.daily_limit_minutes = dev_data.daily_limit_minutes
+            db.commit()
+
+    child_name = None
+    if new_dev.child_profile_id:
+        c = db.query(models.ChildProfile).filter(models.ChildProfile.id == new_dev.child_profile_id).first()
+        if c: child_name = c.name
+
+    await manager.broadcast_json({
+        "type": "DEVICE_CREATED",
+        "device_id": new_dev.id,
+        "device_name": new_dev.device_name,
+        "pairing_code": new_dev.pairing_code
+    })
+
+    return schemas.DeviceResponse(
+        id=new_dev.id,
+        device_name=new_dev.device_name,
+        device_hwid=new_dev.device_hwid,
+        pairing_code=new_dev.pairing_code,
+        is_paired=new_dev.is_paired,
+        status=new_dev.status,
+        child_profile_id=new_dev.child_profile_id,
+        child_name=child_name,
+        platform=new_dev.platform,
+        anti_tamper_active=new_dev.anti_tamper_active,
+        content_filter_active=new_dev.content_filter_active,
+        last_seen=new_dev.last_seen,
+        created_at=new_dev.created_at
+    )
+
+@app.post("/devices/pair", response_model=schemas.DeviceConfigResponse)
+async def pair_device(pair_data: schemas.DevicePairRequest, db: Session = Depends(database.get_db)):
+    """Agent trên máy con gửi mã phần cứng (device_hwid) và mã pairing_code để liên kết và tải cấu hình gốc."""
+    code = pair_data.pairing_code.strip().upper()
+    dev = db.query(models.Device).filter(
+        func.upper(models.Device.pairing_code) == code
+    ).first()
+
+    if not dev:
+        raise HTTPException(status_code=404, detail="Mã ghép nối không hợp lệ hoặc đã hết hạn.")
+
+    dev.device_hwid = pair_data.device_hwid
+    dev.is_paired = True
+    dev.status = "ONLINE_WAN"
+    dev.platform = pair_data.platform or "Linux"
+    if pair_data.ip_address:
+        dev.ip_address = pair_data.ip_address
+    dev.last_seen = datetime.utcnow()
+    dev.pairing_token = str(uuid.uuid4())
+    db.commit()
+    db.refresh(dev)
+
+    # Lấy thông tin cấu hình của phụ huynh
+    child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev.child_profile_id).first() if dev.child_profile_id else None
+    daily_limit = child.daily_limit_minutes if child else 120
+    child_name = child.name if child else "Bé An"
+
+    time_limit = db.query(models.TimeLimit).first()
+    bedtime = time_limit.bedtime if time_limit and time_limit.bedtime else "22:00"
+    wakeup = time_limit.wakeup_time if time_limit and time_limit.wakeup_time else "06:00"
+
+    rules = db.query(models.AppWebRule).all()
+    allowed = [r.target_value for r in rules if r.action == "ALLOW"]
+    blocked = [r.target_value for r in rules if r.action == "BLOCK"]
+
+    await manager.broadcast_json({
+        "type": "DEVICE_PAIRED",
+        "device_id": dev.id,
+        "device_name": dev.device_name,
+        "device_hwid": dev.device_hwid,
+        "child_name": child_name,
+        "platform": dev.platform
+    })
+
+    return schemas.DeviceConfigResponse(
+        device_hwid=dev.device_hwid,
+        device_name=dev.device_name,
+        child_name=child_name,
+        daily_limit_minutes=daily_limit,
+        bedtime=bedtime,
+        wakeup_time=wakeup,
+        allowed_rules=allowed,
+        blocked_rules=blocked,
+        anti_tamper_enabled=dev.anti_tamper_active,
+        content_filter_enabled=dev.content_filter_active,
+        admin_password_hash=hashlib.sha256("admin123".encode()).hexdigest()
+    )
+
+@app.get("/devices/", response_model=List[schemas.DeviceResponse])
+def get_devices(db: Session = Depends(database.get_db)):
+    """Lấy danh sách các thiết bị máy con đã đăng ký hoặc đang quản lý."""
+    devices = db.query(models.Device).order_by(models.Device.created_at.desc()).all()
+    results = []
+    for d in devices:
+        c_name = None
+        if d.child_profile_id:
+            c = db.query(models.ChildProfile).filter(models.ChildProfile.id == d.child_profile_id).first()
+            if c: c_name = c.name
+        
+        # Cập nhật trạng thái
+        current_status = d.status
+        if d.device_hwid and (d.device_hwid in manager.active_connections or d.id in manager.active_connections):
+            current_status = "ONLINE_WAN"
+        elif not d.is_paired:
+            current_status = "PENDING_PAIR"
+            
+        results.append(schemas.DeviceResponse(
+            id=d.id,
+            device_name=d.device_name,
+            device_hwid=d.device_hwid,
+            pairing_code=d.pairing_code,
+            is_paired=d.is_paired,
+            status=current_status,
+            child_profile_id=d.child_profile_id,
+            child_name=c_name,
+            platform=d.platform,
+            anti_tamper_active=d.anti_tamper_active,
+            content_filter_active=d.content_filter_active,
+            last_seen=d.last_seen,
+            created_at=d.created_at
+        ))
+    return results
+
+@app.get("/devices/{hwid}/config", response_model=schemas.DeviceConfigResponse)
+def get_device_config(hwid: str, db: Session = Depends(database.get_db)):
+    """Agent định kỳ tải cấu hình cập nhật từ phụ huynh."""
+    dev = db.query(models.Device).filter(models.Device.device_hwid == hwid).first()
+    if not dev:
+        dev = db.query(models.Device).filter(models.Device.id == hwid).first()
+    if not dev:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
+
+    dev.last_seen = datetime.utcnow()
+    db.commit()
+
+    child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev.child_profile_id).first() if dev.child_profile_id else None
+    daily_limit = child.daily_limit_minutes if child else 120
+    child_name = child.name if child else "Bé An"
+
+    time_limit = db.query(models.TimeLimit).first()
+    bedtime = time_limit.bedtime if time_limit and time_limit.bedtime else "22:00"
+    wakeup = time_limit.wakeup_time if time_limit and time_limit.wakeup_time else "06:00"
+
+    rules = db.query(models.AppWebRule).all()
+    allowed = [r.target_value for r in rules if r.action == "ALLOW"]
+    blocked = [r.target_value for r in rules if r.action == "BLOCK"]
+
+    return schemas.DeviceConfigResponse(
+        device_hwid=dev.device_hwid or hwid,
+        device_name=dev.device_name,
+        child_name=child_name,
+        daily_limit_minutes=daily_limit,
+        bedtime=bedtime,
+        wakeup_time=wakeup,
+        allowed_rules=allowed,
+        blocked_rules=blocked,
+        anti_tamper_enabled=dev.anti_tamper_active,
+        content_filter_enabled=dev.content_filter_active,
+        admin_password_hash=hashlib.sha256("admin123".encode()).hexdigest()
+    )
+
+@app.delete("/devices/{device_id}")
+def delete_device(device_id: str, db: Session = Depends(database.get_db)):
+    """Hủy liên kết và xóa thiết bị."""
+    dev = db.query(models.Device).filter(models.Device.id == device_id).first()
+    if not dev:
+        dev = db.query(models.Device).filter(models.Device.device_hwid == device_id).first()
+    if not dev:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
+    db.delete(dev)
+    db.commit()
+    return {"status": "success", "message": "Đã xóa thiết bị thành công"}
+
+@app.websocket("/ws/relay/{device_hwid}")
+async def cloud_relay_endpoint(websocket: WebSocket, device_hwid: str):
+    """Kênh WebSocket Cloud Relay dành cho máy con kết nối từ xa qua WAN (Bỏ qua NAT/Firewall)."""
+    await manager.connect(device_hwid, websocket)
+    try:
+        await manager.broadcast_json({
+            "type": "DEVICE_CONNECTED_WAN",
+            "device_hwid": device_hwid,
+            "message": f"Thiết bị {device_hwid} đã kết nối từ xa qua Cloud Relay thành công!"
+        })
+        while True:
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                mtype = msg.get("type", "")
+                if mtype == "PING":
+                    await websocket.send_text(json.dumps({"type": "PONG", "timestamp": time.time()}))
+                    continue
+                await manager.broadcast_json(msg, sender_ws=websocket)
+            except Exception:
+                await manager.broadcast_text(data, sender_ws=websocket)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        await manager.broadcast_json({
+            "type": "DEVICE_DISCONNECTED_WAN",
+            "device_hwid": device_hwid
+        })
+
+@app.post("/relay/command")
+async def send_relay_command(payload: dict):
+    """Gửi lệnh điều khiển từ xa qua Cloud Relay tới máy con qua WAN."""
+    target_hwid = payload.get("target_hwid")
+    action = payload.get("action", "MESSAGE")
+    data = payload.get("data", {})
+
+    msg = {
+        "type": action,
+        "target_hwid": target_hwid,
+        "sender": "parent_cloud",
+        "data": data,
+        "timestamp": time.time()
+    }
+    await manager.broadcast_json(msg)
+    return {"status": "success", "message": f"Đã gửi lệnh {action} qua Cloud Relay tới {target_hwid or 'tất cả thiết bị'}"}
+
+@app.post("/ai/content-check", response_model=schemas.ContentFilterResult)
+def api_content_check(req: schemas.ContentFilterAnalysisRequest):
+    """Endpoint phân tích nội dung AI văn bản theo thời gian thực."""
+    import sys
+    sys.path.insert(0, os.path.join(BASE_DIR, "agent"))
+    from ai_filter.text_analyzer import AITextAnalyzer
+    analyzer = AITextAnalyzer()
+
+    text_to_check = f"{req.window_title or ''} {req.text_content or ''} {req.url or ''}".strip()
+    result = analyzer.analyze(text_to_check)
+
+    return schemas.ContentFilterResult(
+        is_safe=result["is_safe"],
+        violation_category=result.get("category"),
+        confidence=result.get("confidence", 0.0),
+        reason=result.get("reason"),
+        suggested_action=result.get("suggested_action", "ALLOW")
+    )
+
 
 # ==========================================
 # 1. THIẾT LẬP LẦN ĐẦU (ONBOARDING SETUP)
@@ -1356,6 +1691,7 @@ async def create_alert(alert: schemas.AlertLogCreate, db: Session = Depends(data
     new_alert = models.AlertLog(
         target_value=alert.target_value.strip(),
         reason=alert.reason.strip(),
+        category=alert.category or "UNAPPROVED_ACCESS",
         is_web=alert.is_web
     )
     db.add(new_alert)
@@ -1366,6 +1702,7 @@ async def create_alert(alert: schemas.AlertLogCreate, db: Session = Depends(data
     await manager.broadcast_json({
         "type": "UNAPPROVED_ATTEMPT",
         "app_name": alert.target_value,
+        "category": new_alert.category,
         "message": f"Con vừa cố truy cập: '{alert.target_value}'. Lý do chặn: {alert.reason}",
         "timestamp": new_alert.timestamp.isoformat()
     })

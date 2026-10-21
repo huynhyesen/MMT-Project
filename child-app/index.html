@@ -128,9 +128,11 @@
         <!-- Top Header Bar -->
         <header class="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold">Dành cho Trẻ Em</span>
                     <span id="bedtime-badge-text" class="text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold">Khóa: 22:00 → Mở: 06:00</span>
+                    <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300 flex items-center gap-1">🤖 Lọc AI: Bật</span>
+                    <span class="text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 font-bold border border-indigo-200 flex items-center gap-1">🔒 Chống tắt ngầm: Bật</span>
                 </div>
                 <h2 id="current-tab-title" class="text-xl md:text-2xl font-black text-slate-800 tracking-tight mt-1">Tổng Quan & Đếm Ngược</h2>
                 <p id="current-tab-desc" class="text-xs text-slate-500">Tự giác cân đối giữa Học tập 📚 và Giải trí 🎮</p>
@@ -202,6 +204,24 @@
             </div>
         </div>
 
+        <!-- CẢNH BÁO AI CONTENT FILTERING (BẢO VỆ NỘI DUNG THỜI GIAN THỰC) -->
+        <div id="ai-content-alert" class="hidden mb-6 p-4 bg-purple-50 border-2 border-purple-400 rounded-2xl text-purple-900 shadow-md">
+            <div class="flex items-start gap-3">
+                <span class="text-3xl animate-bounce">🤖</span>
+                <div class="flex-1">
+                    <h4 class="font-bold text-sm text-purple-900" id="ai-alert-title">AI CONTENT FILTER: NỘI DUNG ĐÃ BỊ TẠM DỪNG!</h4>
+                    <p class="text-xs text-purple-800 mt-1" id="ai-alert-desc">
+                        Hệ thống AI vừa phát hiện nội dung có thể chứa hình ảnh hoặc từ ngữ nhạy cảm (18+, bạo lực, cá cược) không phù hợp với lứa tuổi của con. Hệ thống đã tạm dừng để bảo vệ con an toàn!
+                    </p>
+                    <div class="mt-2.5 flex items-center gap-2">
+                        <button onclick="document.getElementById('ai-content-alert').classList.add('hidden')" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold shadow-xs">
+                            Đã hiểu & Tiếp tục học tập 📚
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- CẢNH BÁO SỚM GRACEFUL SHUTDOWN (15m & 5m) -->
         <div id="graceful-alert-15m" class="hidden mb-6 p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-900 flex items-center justify-between shadow-md">
             <div class="flex items-center gap-3">
@@ -225,6 +245,27 @@
             <div class="flex items-center gap-2">
                 <button onclick="switchChildTab('request')" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-xs">Xin thêm giờ 🚀</button>
                 <button onclick="document.getElementById('graceful-alert-5m').classList.add('hidden')" class="bg-rose-200 hover:bg-rose-300 text-rose-900 font-semibold px-2 py-1.5 rounded-xl text-xs">&times;</button>
+            </div>
+        </div>
+
+        <!-- CẢNH BÁO KHI ĐÃ HẾT GIỜ (EXPIRED BANNER VỚI NÚT XIN GIỜ & ĐỔI VIỆC TỐT) -->
+        <div id="graceful-alert-expired" class="hidden mb-6 p-5 bg-rose-100 border-2 border-rose-500 rounded-3xl text-rose-900 shadow-xl">
+            <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <span class="text-4xl animate-pulse">⏰</span>
+                    <div>
+                        <h4 class="font-bold text-base text-rose-900">ĐÃ HẾT THỜI GIAN SỬ DỤNG HÔM NAY!</h4>
+                        <p class="text-xs text-rose-800 mt-0.5">Thời gian hôm nay của con đã về 00:00:00. Con hãy gửi yêu cầu xin cha mẹ thêm giờ học hoặc làm việc tốt để đổi lấy giờ nhé!</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="switchChildTab('request')" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-md transition flex items-center gap-1.5 whitespace-nowrap">
+                        <span>Xin thêm giờ</span> 🚀
+                    </button>
+                    <button onclick="switchChildTab('gamification')" class="bg-amber-500 hover:bg-amber-600 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-md transition flex items-center gap-1.5 whitespace-nowrap">
+                        <span>Đổi việc tốt</span> 🏆
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -854,11 +895,30 @@
                 showToast("💬 Cha Mẹ vừa gửi một lời nhắn cho con!", "indigo");
             } else if (type === "REQUEST_DECIDED") {
                 const req = data.data;
-                const statusTxt = req.status === "APPROVED" ? "✅ ĐÃ ĐỒNG Ý" : "❌ CHƯA ĐỒNG Ý";
-                showToast(`Cha Mẹ ${statusTxt} yêu cầu: ${req.target_detail}`, req.status === "APPROVED" ? "emerald" : "rose");
+                const isApproved = req.status === "APPROVED";
+                const statusTxt = isApproved ? "✅ ĐÃ ĐỒNG Ý" : "❌ CHƯA ĐỒNG Ý";
+                showToast(`Cha Mẹ ${statusTxt} yêu cầu: ${req.target_detail}`, isApproved ? "emerald" : "rose");
+                if (isApproved && req.request_type && req.request_type.includes("TIME")) {
+                    alert15Shown = false;
+                    alert5Shown = false;
+                    const alert15 = document.getElementById("graceful-alert-15m");
+                    const alert5 = document.getElementById("graceful-alert-5m");
+                    const alertExp = document.getElementById("graceful-alert-expired");
+                    if (alert15) alert15.classList.add("hidden");
+                    if (alert5) alert5.classList.add("hidden");
+                    if (alertExp) alertExp.classList.add("hidden");
+                }
                 fetchChildRequests();
                 fetchAllowedRules();
                 fetchUsageStats();
+            } else if (type === "AI_CONTENT_VIOLATION") {
+                const alertEl = document.getElementById("ai-content-alert");
+                if (alertEl) {
+                    document.getElementById("ai-alert-title").innerText = `🤖 AI FILTER: NỘI DUNG "${data.source || 'Cửa sổ'}" ĐÃ BỊ CHẶN!`;
+                    document.getElementById("ai-alert-desc").innerText = data.reason || "Hệ thống AI vừa phát hiện nội dung có thể không phù hợp với lứa tuổi của con.";
+                    alertEl.classList.remove("hidden");
+                }
+                showToast(`🤖 AI Content Filter vừa chặn: ${data.source || 'nội dung vi phạm'}`, "rose");
             } else if (type === "CHILD_SWITCHED" || type === "PROFILES_UPDATED") {
                 countdownSeconds = -1;
                 lastServerDailyLimit = null;
@@ -1193,6 +1253,38 @@
 
             let domain = rawVal.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].split('?')[0];
 
+            // 0. AI Content Filter kiểm tra thời gian thực từ khóa & ngữ nghĩa
+            try {
+                const aiRes = await fetch(`${API_BASE}/ai/content-check`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text_content: rawVal, url: domain })
+                });
+                if (aiRes.ok) {
+                    const aiData = await aiRes.json();
+                    if (!aiData.is_safe) {
+                        const alertEl = document.getElementById("ai-content-alert");
+                        if (alertEl) {
+                            document.getElementById("ai-alert-title").innerText = `🤖 AI FILTER: NỘI DUNG KHÔNG PHÙ HỢP ("${rawVal}")!`;
+                            document.getElementById("ai-alert-desc").innerText = aiData.reason || "Hệ thống AI vừa phát hiện nội dung có thể không phù hợp với lứa tuổi của con.";
+                            alertEl.classList.remove("hidden");
+                        }
+                        showToast(`🚨 AI Content Filter đã chặn: ${rawVal}`, "rose");
+                        fetch(`${API_BASE}/alerts/`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                target_value: rawVal,
+                                reason: `AI Filter chặn: ${aiData.reason}`,
+                                category: `AI_CONTENT_${aiData.violation_category || 'TEXT'}`,
+                                is_web: true
+                            })
+                        }).catch(() => {});
+                        return;
+                    }
+                }
+            } catch (e) {}
+
             try {
                 // 1. Kiểm tra với Backend xem web/app có được phép không + Lấy nhãn AI
                 const res = await fetch(`${API_BASE}/check-permission/`, {
@@ -1400,6 +1492,7 @@
         function renderCountdownDisplay() {
             const displayEl = document.getElementById("countdown-display");
             const statusEl = document.getElementById("countdown-status");
+            const alertExp = document.getElementById("graceful-alert-expired");
             if (!displayEl) return;
 
             if (countdownSeconds < 0) {
@@ -1415,7 +1508,13 @@
                     statusEl.className = "mt-1 text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block bg-rose-500 text-white animate-pulse";
                     statusEl.textContent = "🔴 Đã hết thời gian!";
                 }
+                if (alertExp) alertExp.classList.remove("hidden");
                 return;
+            }
+
+            // Nếu còn thời gian thì ẩn thông báo hết giờ
+            if (alertExp && !alertExp.classList.contains("hidden")) {
+                alertExp.classList.add("hidden");
             }
 
             const hours = Math.floor(countdownSeconds / 3600);

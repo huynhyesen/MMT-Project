@@ -10,7 +10,7 @@ class TelemetryCreate(BaseModel):
 class ChildRequestCreate(BaseModel):
     request_type: str # 'PERMISSION_WEB', 'PERMISSION_APP', 'TIME_EXTENSION'
     target_detail: Optional[str] = None
-    reason_from_child: str
+    reason_from_child: Optional[str] = "Con xin phép cha mẹ"
     category: Optional[str] = None
     requested_minutes: Optional[int] = 0
 
@@ -18,7 +18,7 @@ class ChildRequestResponse(BaseModel):
     id: int
     request_type: str
     target_detail: Optional[str] = None
-    reason_from_child: str
+    reason_from_child: Optional[str] = None
     status: str
     parent_feedback: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -150,16 +150,18 @@ class ChildLoginRequest(BaseModel):
     child_id: int
     pin: Optional[str] = None
 
-# Schemas cho Cảnh báo truy cập web lạ / chưa phép
+# Schemas cho Cảnh báo truy cập web lạ / chưa phép & AI Content Filter
 class AlertLogCreate(BaseModel):
     target_value: str
     reason: Optional[str] = "Truy cập web lạ chưa được cha mẹ cho phép"
+    category: Optional[str] = "UNAPPROVED_ACCESS" # 'AI_CONTENT_TEXT', 'AI_CONTENT_IMAGE', 'ANTI_TAMPER_ATTEMPT', 'UNAPPROVED_ACCESS'
     is_web: Optional[bool] = True
 
 class AlertLogResponse(BaseModel):
     id: int
     target_value: str
     reason: str
+    category: Optional[str] = "UNAPPROVED_ACCESS"
     is_web: bool
     timestamp: datetime
 
@@ -175,3 +177,67 @@ class CurfewResponse(BaseModel):
     bedtime: str
     wakeup_time: str
     is_within_curfew: bool
+
+# ==========================================
+# SCHEMAS CHO QUẢN LÝ THIẾT BỊ & GHÉP NỐI (DEVICE PAIRING & CLOUD SYNC)
+# ==========================================
+class DeviceCreateRequest(BaseModel):
+    device_name: str
+    child_profile_id: Optional[int] = None
+    daily_limit_minutes: Optional[int] = 120
+    bedtime: Optional[str] = "22:00"
+    wakeup_time: Optional[str] = "06:00"
+    blocked_items: Optional[List[str]] = None
+
+class DevicePairRequest(BaseModel):
+    device_hwid: str
+    pairing_code: str
+    device_name: Optional[str] = None
+    platform: Optional[str] = "Linux"
+    ip_address: Optional[str] = None
+
+class DeviceResponse(BaseModel):
+    id: str
+    device_name: str
+    device_hwid: Optional[str] = None
+    pairing_code: Optional[str] = None
+    is_paired: bool
+    status: str
+    child_profile_id: Optional[int] = None
+    child_name: Optional[str] = None
+    platform: Optional[str] = "Linux"
+    anti_tamper_active: bool = True
+    content_filter_active: bool = True
+    last_seen: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class DeviceConfigResponse(BaseModel):
+    device_hwid: str
+    device_name: str
+    child_name: str
+    daily_limit_minutes: int
+    bedtime: str
+    wakeup_time: str
+    allowed_rules: List[str]
+    blocked_rules: List[str]
+    anti_tamper_enabled: bool = True
+    content_filter_enabled: bool = True
+    admin_password_hash: str = "admin123"
+
+# Schemas cho AI Content Filter
+class ContentFilterAnalysisRequest(BaseModel):
+    text_content: Optional[str] = None
+    window_title: Optional[str] = None
+    url: Optional[str] = None
+    image_base64: Optional[str] = None
+
+class ContentFilterResult(BaseModel):
+    is_safe: bool
+    violation_category: Optional[str] = None # 'ADULT', 'VIOLENCE', 'GAMBLING', 'TOXIC', None
+    confidence: float = 0.0
+    reason: Optional[str] = None
+    suggested_action: str = "ALLOW" # 'ALLOW', 'BLOCK_AND_CLOSE', 'WARN'
+

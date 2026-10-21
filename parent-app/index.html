@@ -84,9 +84,16 @@
                 <button onclick="switchParentTab('alerts')" id="nav-alerts" class="nav-item w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition">
                     <div class="flex items-center gap-3">
                         <span class="text-base">🚨</span>
-                        <span>Cảnh báo web lạ</span>
+                        <span>Cảnh báo & Lọc AI</span>
                     </div>
                     <span id="nav-alerts-badge" class="hidden bg-rose-500 text-white font-bold px-2 py-0.5 rounded-full text-[10px]">0</span>
+                </button>
+                <button onclick="switchParentTab('devices')" id="nav-devices" class="nav-item w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition">
+                    <div class="flex items-center gap-3">
+                        <span class="text-base">💻</span>
+                        <span>Thiết bị & Ghép nối</span>
+                    </div>
+                    <span id="nav-devices-badge" class="bg-blue-600/40 text-blue-300 border border-blue-500/40 font-bold px-2 py-0.5 rounded-full text-[10px]">0</span>
                 </button>
                 <button onclick="switchParentTab('reset')" id="nav-reset" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition">
                     <span class="text-base">🔄</span>
@@ -570,6 +577,54 @@
             </div>
         </div>
 
+        <!-- TAB 9.5: QUẢN LÝ THIẾT BỊ & GHÉP NỐI (DEVICES & CLOUD RELAY) -->
+        <div id="tab-devices" class="tab-pane hidden space-y-5">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-4 border-b border-slate-100 gap-3">
+                    <div>
+                        <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                            <span>💻</span> Quản Lý Thiết Bị Con Cái (Cloud Remote Sync over WAN)
+                        </h2>
+                        <p class="text-xs text-slate-500 mt-0.5">
+                            Ghép nối tự động theo mã phần cứng (HWID), điều khiển từ xa qua Cloud Relay và chống tắt Agent qua Task Manager
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="fetchDevices()" class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
+                            🔄 Làm mới
+                        </button>
+                        <button onclick="openAddDeviceModal()" class="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3.5 rounded-lg text-xs shadow-sm transition">
+                            <span>➕ Thêm Thiết Bị Của Con</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 3 Thẻ thống kê nhanh công nghệ -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                    <div class="p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
+                        <div class="text-[11px] font-bold text-blue-700 flex items-center gap-1">☁️ Kênh Kết Nối WAN</div>
+                        <div class="text-base font-extrabold text-blue-900 mt-1">Cloud Relay P2P</div>
+                        <span class="text-[10px] text-blue-600">Quản lý từ xa ngoài mạng Wi-Fi</span>
+                    </div>
+                    <div class="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl">
+                        <div class="text-[11px] font-bold text-indigo-700 flex items-center gap-1">🔒 Anti-Tamper Service</div>
+                        <div class="text-base font-extrabold text-indigo-900 mt-1">Khóa mật khẩu Admin</div>
+                        <span class="text-[10px] text-indigo-600">Chống tắt ngầm qua Task Manager</span>
+                    </div>
+                    <div class="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                        <div class="text-[11px] font-bold text-emerald-700 flex items-center gap-1">🤖 AI Content Filtering</div>
+                        <div class="text-base font-extrabold text-emerald-900 mt-1">Lọc Văn Bản & Màn Hình</div>
+                        <span class="text-[10px] text-emerald-600">Chặn nội dung 18+ & bạo lực tức thì</span>
+                    </div>
+                </div>
+
+                <!-- Danh sách thiết bị -->
+                <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="p-8 text-center text-slate-400 text-xs col-span-2">Đang tải danh sách thiết bị...</div>
+                </div>
+            </div>
+        </div>
+
         <!-- TAB 10: CÀI ĐẶT & ĐẶT LẠI HỆ THỐNG (RESET) -->
         <div id="tab-reset" class="tab-pane hidden space-y-4">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -728,6 +783,97 @@
         </div>
     </div>
 
+    <!-- MODAL THÊM THIẾT BỊ MỚI & GHÉP NỐI (DEVICE PAIRING MODAL) -->
+    <div id="add-device-modal" class="fixed inset-0 bg-slate-900/60 z-50 hidden flex justify-center items-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-scaleUp max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-2xl">💻</span>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-800">Thêm & Ghép Nối Thiết Bị Con Cái</h3>
+                        <p class="text-[11px] text-slate-400">Tạo mã ghép nối để liên kết máy tính của con với Trạm điều khiển</p>
+                    </div>
+                </div>
+                <button onclick="closeAddDeviceModal()" class="text-slate-400 hover:text-slate-600 font-bold text-lg">&times;</button>
+            </div>
+
+            <!-- Khung Form nhập thiết bị ban đầu -->
+            <form id="create-device-form" onsubmit="submitCreateDevice(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Tên thiết bị (VD: Laptop Bé An, Máy Bàn Phòng Học):</label>
+                    <input type="text" id="devName" required placeholder="VD: Laptop Học Tập Bé An" class="w-full border border-slate-300 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Gán cho hồ sơ của bé:</label>
+                    <select id="devChildProfile" class="w-full border border-slate-300 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="">-- Chưa gán bé cụ thể --</option>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Hạn mức dùng máy (phút):</label>
+                        <input type="number" id="devLimit" value="90" min="15" step="15" class="w-full border border-slate-300 rounded-xl p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none font-bold text-blue-600">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Giờ giới nghiêm ban đêm:</label>
+                        <input type="text" id="devBedtime" value="22:00" placeholder="22:00" class="w-full border border-slate-300 rounded-xl p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none font-mono">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Chặn sẵn các web/game độc hại:</label>
+                    <div class="grid grid-cols-2 gap-2 text-xs text-slate-700">
+                        <label class="flex items-center gap-1.5 p-2 bg-slate-50 border rounded-lg cursor-pointer">
+                            <input type="checkbox" id="block-roblox" checked class="rounded text-blue-600"> <span>Roblox</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 p-2 bg-slate-50 border rounded-lg cursor-pointer">
+                            <input type="checkbox" id="block-tiktok" checked class="rounded text-blue-600"> <span>TikTok</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 p-2 bg-slate-50 border rounded-lg cursor-pointer">
+                            <input type="checkbox" id="block-discord" checked class="rounded text-blue-600"> <span>Discord</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 p-2 bg-slate-50 border rounded-lg cursor-pointer">
+                            <input type="checkbox" id="block-facebook" checked class="rounded text-blue-600"> <span>Facebook</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="closeAddDeviceModal()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl text-xs transition">Hủy</button>
+                    <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-xl text-xs shadow-md transition">Tạo Mã Ghép Nối 🔑</button>
+                </div>
+            </form>
+
+            <!-- Khung kết quả mã ghép nối & hướng dẫn máy con -->
+            <div id="device-paired-instructions" class="hidden space-y-4 pt-2 border-t border-slate-100 animate-fadeIn">
+                <div class="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-2xl text-center">
+                    <div class="text-xs font-bold text-emerald-800 uppercase tracking-wider">MÃ GHÉP NỐI (PAIRING CODE)</div>
+                    <div id="generated-pairing-code" class="text-3xl font-extrabold font-mono text-emerald-700 tracking-widest my-2 select-all">
+                        MMT-8842
+                    </div>
+                    <div class="text-[11px] text-emerald-700">Mã có hiệu lực liên kết máy con tự động theo mã phần cứng (HWID)</div>
+                </div>
+
+                <div class="space-y-2">
+                    <div class="text-xs font-bold text-slate-800">👉 Bước 2: Chạy lệnh trên máy tính của con:</div>
+                    <div class="p-3 bg-slate-900 rounded-xl text-slate-200 text-xs font-mono relative overflow-x-auto">
+                        <code id="pairing-cmd-linux">python agent/agent_main.py --pair-code MMT-8842</code>
+                    </div>
+                    <div class="p-3 bg-slate-900 rounded-xl text-slate-200 text-xs font-mono relative overflow-x-auto">
+                        <span class="text-amber-400 text-[10px] block mb-1"># Cài đặt dịch vụ chạy ngầm chống tắt qua Task Manager:</span>
+                        <code id="pairing-cmd-service">sudo python agent/anti_tamper/systemd_service.py --install</code>
+                    </div>
+                </div>
+
+                <button onclick="closeAddDeviceModal(); switchParentTab('devices');" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition">
+                    Đã Hiểu & Xem Danh Sách Thiết Bị ✅
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- JAVASCRIPT LOGIC -->
     <script>
         let API_BASE = "http://127.0.0.1:8008";
@@ -754,7 +900,8 @@
             'stats': { title: '📊 Thống Kê & Giới Hạn', desc: 'Thống kê các app/web thực sự sử dụng với nhãn AI và tự điền giới hạn' },
             'rules': { title: '🛡️ Quản Lý Quy Tắc Web / App', desc: 'Danh sách các trang web / phần mềm đang được Cho phép hoặc Chặn' },
             'curfew': { title: '🌙 Khung Giờ Giới Nghiêm', desc: 'Tự động vô hiệu hóa máy ban đêm và mở lại vào sáng hôm sau' },
-            'alerts': { title: '🚨 Nhật Ký Cảnh Báo Web Lạ', desc: 'Phát hiện khi trẻ tự ý truy cập các trang web lạ hoặc mở app bị chặn' },
+            'alerts': { title: '🚨 Nhật Ký Cảnh Báo & Lọc AI', desc: 'Phát hiện nội dung không phù hợp qua AI và cảnh báo can thiệp Anti-Tamper' },
+            'devices': { title: '💻 Quản Lý Thiết Bị & Ghép Nối (Cloud WAN)', desc: 'Ghép nối máy con từ xa theo mã HWID, điều khiển qua Cloud Relay và bảo vệ chống tắt' },
             'reset': { title: '🔄 Cài Đặt & Đặt Lại Hệ Thống', desc: 'Đặt lại thời gian về 0, làm sạch hộp thư hoặc khôi phục cài đặt gốc' }
         };
 
@@ -821,6 +968,7 @@
             fetchChildren();
             fetchCurfew();
             fetchAlerts();
+            fetchDevices();
         }
 
         function showServerNotice(show) {
@@ -859,9 +1007,18 @@
                             banner.classList.remove("hidden");
                             showToast(`⚠️ Con vừa cố mở web/app lạ chưa xin phép: "${data.app_name}"`, "danger");
                             fetchAlerts();
+                        } else if (data.type === "AI_CONTENT_VIOLATION") {
+                            showToast(`🚨 [AI Filter] Đã chặn nội dung không phù hợp: "${data.source}" (${data.reason})`, "danger");
+                            fetchAlerts();
+                        } else if (data.type === "DEVICE_CREATED" || data.type === "DEVICE_PAIRED" || data.type === "DEVICE_CONNECTED_WAN" || data.type === "DEVICE_DISCONNECTED_WAN") {
+                            if (data.type === "DEVICE_PAIRED") {
+                                showToast(`🎉 Thiết bị "${data.device_name}" đã ghép nối thành công!`, "success");
+                            }
+                            fetchDevices();
                         } else if (data.type === "PROFILES_UPDATED" || data.type === "CHILD_SWITCHED") {
                             fetchChildren();
                             fetchUsageStats();
+                            fetchDevices();
                         } else if (data.type === "CURFEW_UPDATED") {
                             fetchCurfew();
                         } else if (data.type === "RULES_UPDATED") {
@@ -1634,6 +1791,18 @@
 
                 container.innerHTML = alerts.map(a => {
                     const timeStr = new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    
+                    let catBadge = `<span class="text-[9px] bg-blue-100 text-blue-800 border border-blue-200 font-bold px-1.5 py-0.5 rounded">⚠️ Web Lạ Chưa Phép</span>`;
+                    if (a.category === "AI_CONTENT_TEXT") {
+                        catBadge = `<span class="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">🤖 Lọc AI Văn Bản</span>`;
+                    } else if (a.category === "AI_CONTENT_IMAGE") {
+                        catBadge = `<span class="text-[9px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">🖼️ Lọc AI Màn Hình</span>`;
+                    } else if (a.category === "ANTI_TAMPER_ATTEMPT") {
+                        catBadge = `<span class="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">🔒 Chống Tắt Ngầm</span>`;
+                    } else if (a.category === "BLOCKED_APP") {
+                        catBadge = `<span class="text-[9px] bg-rose-100 text-rose-800 border border-rose-300 font-bold px-1.5 py-0.5 rounded">🛑 Ứng Dụng Cấm</span>`;
+                    }
+
                     return `
                         <div class="p-3.5 bg-rose-50/70 border border-rose-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                             <div class="flex items-center gap-2.5">
@@ -1641,6 +1810,7 @@
                                 <div>
                                     <div class="flex items-center gap-2">
                                         <span class="font-bold text-rose-900 text-xs">${a.target_value}</span>
+                                        ${catBadge}
                                         <span class="text-[10px] bg-rose-200 text-rose-800 px-1.5 py-0.5 rounded font-mono">${timeStr}</span>
                                     </div>
                                     <p class="text-[11px] text-rose-700 mt-0.5">${a.reason || "Cố tình truy cập trang web lạ chưa xin phép"}</p>
@@ -1691,13 +1861,212 @@
                     body: JSON.stringify({
                         rule_type: target.includes(".") ? "WEBSITE" : "APP",
                         target_value: target,
-                        action: "BLOCK",
-                        time_limit_minutes: 0
+                        action: "BLOCK"
                     })
                 });
-                showToast(`🛑 Đã chặn vĩnh viễn: "${target}"!`, "info");
-                fetchRules();
+                showToast(`⛔ Đã đưa "${target}" vào danh sách chặn!`, "info");
                 fetchAlerts();
+                fetchRules();
+            } catch (e) {}
+        }
+
+        // ==========================================
+        // QUẢN LÝ THIẾT BỊ CON CÁI & GHÉP NỐI (DEVICES)
+        // ==========================================
+        let cachedDevices = [];
+
+        async function fetchDevices() {
+            const container = document.getElementById("devices-container");
+            const navBadge = document.getElementById("nav-devices-badge");
+            try {
+                const res = await fetch(`${API_BASE}/devices/`);
+                if (!res.ok) return;
+                const devices = await res.json();
+                cachedDevices = devices;
+
+                if (navBadge) {
+                    navBadge.textContent = devices.length;
+                }
+
+                if (!container) return;
+
+                if (devices.length === 0) {
+                    container.innerHTML = `
+                        <div class="p-8 text-center text-slate-400 text-xs col-span-2 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                            <span class="text-3xl block mb-2">💻</span>
+                            Chưa có thiết bị nào được ghép nối.<br>
+                            Hãy bấm <strong>➕ Thêm Thiết Bị Của Con</strong> để tạo hồ sơ và lấy mã ghép nối cài lên máy tính của con!
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = devices.map(d => {
+                    const isOnline = d.status === "ONLINE_WAN" || d.status === "ONLINE_LAN";
+                    const isPending = !d.is_paired;
+                    
+                    let statusBadge = "";
+                    if (isOnline) {
+                        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>Trực tuyến (Cloud WAN)</span>`;
+                    } else if (isPending) {
+                        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">🟡 Chờ ghép nối (Mã: ${d.pairing_code})</span>`;
+                    } else {
+                        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">⚪ Ngoại tuyến</span>`;
+                    }
+
+                    const platformIcon = (d.platform || "").toLowerCase().includes("win") ? "🪟 Windows" : "🐧 Linux";
+
+                    return `
+                        <div class="p-4 bg-white border border-slate-200 rounded-2xl shadow-xs hover:shadow-md transition space-y-3">
+                            <div class="flex items-start justify-between gap-2">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center text-xl shadow-xs">
+                                        💻
+                                    </div>
+                                    <div>
+                                        <h4 class="font-bold text-slate-800 text-xs">${d.device_name}</h4>
+                                        <span class="text-[10px] text-slate-500">${platformIcon} • ${d.child_name ? '🧒 ' + d.child_name : 'Chưa gán bé'}</span>
+                                    </div>
+                                </div>
+                                <div>${statusBadge}</div>
+                            </div>
+
+                            <!-- Thông tin phần cứng & Bảo mật -->
+                            <div class="p-2.5 bg-slate-50 border border-slate-100 rounded-xl space-y-1 text-[11px]">
+                                <div class="flex justify-between items-center text-slate-600">
+                                    <span>Mã phần cứng (HWID):</span>
+                                    <code class="font-mono text-[10px] font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-200 select-all">${d.device_hwid || 'Chờ máy con gửi HWID'}</code>
+                                </div>
+                                <div class="flex justify-between items-center text-slate-600">
+                                    <span>Bảo vệ chống tắt:</span>
+                                    <span class="font-semibold text-indigo-700">🔒 System Service / Daemon (Mật khẩu Admin)</span>
+                                </div>
+                                <div class="flex justify-between items-center text-slate-600">
+                                    <span>Bộ lọc AI:</span>
+                                    <span class="font-semibold text-emerald-700">🤖 Văn bản & Màn hình thời gian thực</span>
+                                </div>
+                            </div>
+
+                            <!-- Các nút điều khiển từ xa qua Cloud Relay -->
+                            <div class="flex items-center justify-between pt-1 border-t border-slate-100">
+                                <div class="flex items-center gap-1.5">
+                                    <button onclick="sendRemoteDeviceCommand('${d.device_hwid || d.id}', 'LOCK_MACHINE')" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition" title="Khóa màn hình máy con ngay lập tức qua WAN">
+                                        🔒 Khóa
+                                    </button>
+                                    <button onclick="sendRemoteDeviceCommand('${d.device_hwid || d.id}', 'UNLOCK_MACHINE')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition" title="Mở khóa máy con từ xa">
+                                        🔓 Mở
+                                    </button>
+                                    <button onclick="promptSendMessage('${d.device_hwid || d.id}')" class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition" title="Gửi lời nhắn tới máy con">
+                                        💬 Nhắn
+                                    </button>
+                                </div>
+                                <button onclick="deleteDeviceItem('${d.id}')" class="text-slate-400 hover:text-rose-600 text-xs transition p-1" title="Xóa thiết bị này">
+                                    🗑️ Xóa
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join("");
+            } catch (e) {}
+        }
+
+        function openAddDeviceModal() {
+            const selectEl = document.getElementById("devChildProfile");
+            if (selectEl && Array.isArray(currentChildren) && currentChildren.length > 0) {
+                selectEl.innerHTML = `<option value="">-- Chưa gán bé cụ thể --</option>` + currentChildren.map(c => `
+                    <option value="${c.id}">${c.avatar || '🧒'} ${c.name} (${c.age} tuổi)</option>
+                `).join("");
+            }
+            document.getElementById("create-device-form").classList.remove("hidden");
+            document.getElementById("device-paired-instructions").classList.add("hidden");
+            document.getElementById("add-device-modal").classList.remove("hidden");
+        }
+
+        function closeAddDeviceModal() {
+            document.getElementById("add-device-modal").classList.add("hidden");
+        }
+
+        async function submitCreateDevice(e) {
+            e.preventDefault();
+            const name = document.getElementById("devName").value.trim();
+            const childId = document.getElementById("devChildProfile").value;
+            const limit = parseInt(document.getElementById("devLimit").value) || 90;
+            const bedtime = document.getElementById("devBedtime").value.trim() || "22:00";
+
+            const blockedItems = [];
+            if (document.getElementById("block-roblox")?.checked) blockedItems.push("roblox");
+            if (document.getElementById("block-tiktok")?.checked) blockedItems.push("tiktok.com");
+            if (document.getElementById("block-discord")?.checked) blockedItems.push("discord.com");
+            if (document.getElementById("block-facebook")?.checked) blockedItems.push("facebook.com");
+
+            try {
+                const res = await fetch(`${API_BASE}/devices/create`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        device_name: name,
+                        child_profile_id: childId ? parseInt(childId) : null,
+                        daily_limit_minutes: limit,
+                        bedtime: bedtime,
+                        blocked_items: blockedItems
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById("create-device-form").classList.add("hidden");
+                    document.getElementById("generated-pairing-code").textContent = data.pairing_code;
+                    document.getElementById("pairing-cmd-linux").textContent = `python agent/agent_main.py --pair-code ${data.pairing_code}`;
+                    document.getElementById("device-paired-instructions").classList.remove("hidden");
+                    showToast(`🎉 Đã tạo mã ghép nối: ${data.pairing_code}`, "success");
+                    fetchDevices();
+                } else {
+                    alert("Không thể tạo thiết bị, vui lòng thử lại!");
+                }
+            } catch (err) {
+                alert("Lỗi kết nối máy chủ: " + err.message);
+            }
+        }
+
+        async function sendRemoteDeviceCommand(hwid, action) {
+            try {
+                const res = await fetch(`${API_BASE}/relay/command`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        target_hwid: hwid,
+                        action: action
+                    })
+                });
+                if (res.ok) {
+                    showToast(`🚀 Đã gửi lệnh ${action} tới máy con qua Cloud Relay WAN!`, "success");
+                }
+            } catch (e) {
+                alert("Lỗi gửi lệnh: " + e.message);
+            }
+        }
+
+        function promptSendMessage(hwid) {
+            const msg = prompt("Nhập lời nhắn gửi tới máy con:");
+            if (!msg) return;
+            fetch(`${API_BASE}/relay/command`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    target_hwid: hwid,
+                    action: "PARENT_MESSAGE",
+                    data: { message: msg }
+                })
+            }).then(() => showToast(`💬 Đã gửi lời nhắn: "${msg}"`, "info"));
+        }
+
+        async function deleteDeviceItem(devId) {
+            if (!confirm("Bạn có chắc chắn muốn hủy liên kết và xóa thiết bị này?")) return;
+            try {
+                const res = await fetch(`${API_BASE}/devices/${devId}`, { method: "DELETE" });
+                if (res.ok) {
+                    showToast("Đã xóa thiết bị thành công", "info");
+                    fetchDevices();
+                }
             } catch (e) {}
         }
 
@@ -1840,6 +2209,7 @@
             fetchCurfew();
             fetchChildren();
             fetchAlerts();
+            fetchDevices();
 
             switchParentTab('overview');
         });

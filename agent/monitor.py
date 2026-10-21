@@ -7,13 +7,15 @@ def get_active_app_metadata():
     Tuyệt đối không thu thập URL đầy đủ, nội dung gõ phím hay chụp ảnh màn hình.
     """
     active_apps = []
+    seen = set()
     for proc in psutil.process_iter(['name']):
         try:
             p_name = proc.info.get('name')
-            if p_name:
+            if p_name and p_name not in seen:
+                seen.add(p_name)
                 active_apps.append({
                     "app_name": p_name,
-                    "domain": None,  # Nếu là trình duyệt, chỉ lọc tên miền (domain) qua extension nếu cần
+                    "domain": None,  # Nếu là trình duyệt, chỉ lọc tên miền (domain) an toàn
                     "duration_seconds": 5
                 })
         except (psutil.NoSuchProcess, psutil.AccessDenied):

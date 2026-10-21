@@ -15,8 +15,19 @@ class Device(Base):
     __tablename__ = "devices"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     device_name = Column(String(100), nullable=False)
-    status = Column(String(20), default='OFFLINE')
+    device_hwid = Column(String(100), unique=True, index=True, nullable=True) # Mã phần cứng độc nhất
+    pairing_code = Column(String(20), unique=True, index=True, nullable=True) # Mã ghép nối (VD: MMT-8842)
+    pairing_token = Column(String(100), nullable=True) # Token xác thực phiên
+    is_paired = Column(Boolean, default=False) # Đã hoàn tất ghép nối hay chưa
+    status = Column(String(20), default='OFFLINE') # 'ONLINE_LAN', 'ONLINE_WAN', 'OFFLINE'
     user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    child_profile_id = Column(Integer, ForeignKey("child_profiles.id"), nullable=True)
+    platform = Column(String(50), default="Linux") # 'Windows', 'Linux'
+    ip_address = Column(String(50), nullable=True)
+    anti_tamper_active = Column(Boolean, default=True) # Chống tắt qua Task Manager / Systemd
+    content_filter_active = Column(Boolean, default=True) # Bộ lọc AI văn bản & hình ảnh
+    last_seen = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
 
 class TimeLimit(Base):
     __tablename__ = "time_limits"
@@ -87,5 +98,6 @@ class AlertLog(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     target_value = Column(String(255), nullable=False)
     reason = Column(String(255), nullable=False)
+    category = Column(String(50), default="UNAPPROVED_ACCESS") # 'AI_CONTENT_TEXT', 'AI_CONTENT_IMAGE', 'ANTI_TAMPER_ATTEMPT', 'UNAPPROVED_ACCESS'
     is_web = Column(Boolean, default=True)
     timestamp = Column(DateTime, server_default=func.now(), default=datetime.utcnow)

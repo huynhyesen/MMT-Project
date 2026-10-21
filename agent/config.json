@@ -1,0 +1,9 @@
+{
+  "hwid": "HWID-448C-6F44-D3A4-B31E",
+  "device_name": "PC-B31E",
+  "is_paired": true,
+  "pairing_code": "MMT-6541",
+  "backend_url": "http://127.0.0.1:8000",
+  "cloud_relay_ws": "ws://127.0.0.1:8008",
+  "last_sync": null
+}
