@@ -56,15 +56,16 @@ def load_usage_stats():
     used_str = data.get("total_formatted", "0 phút")
     bedtime = data.get("is_bedtime", False)
     bedtime_hour = data.get("bedtime_hour", "22:00")
+    wakeup_hour = data.get("wakeup_hour", "06:00")
 
     if bedtime:
         time_status_label.config(
-            text=f"🌙 ĐÃ ĐẾN GIỜ ĐI NGỦ (Sau {bedtime_hour}) - Đã dùng: {used_str}", 
+            text=f"🌙 GIỜ GIỚI NGHIÊM (Khóa từ {bedtime_hour} → Mở lúc {wakeup_hour} sáng) - Đã dùng: {used_str}", 
             fg="#dc2626"
         )
     else:
         time_status_label.config(
-            text=f"🟢 Hôm nay đã dùng: {used_str} • Đang kết nối an toàn", 
+            text=f"🟢 Hôm nay đã dùng: {used_str} • Giới nghiêm: {bedtime_hour} - {wakeup_hour}", 
             fg="#059669"
         )
 
@@ -271,7 +272,7 @@ type_dropdown.pack(fill="x", pady=(1, 5))
 tk.Label(frame_unlock, text="Gắn nhãn mục đích:", font=("Segoe UI", 8)).pack(anchor="w")
 cat_var = tk.StringVar(value="Học tập & Giáo dục")
 cat_dropdown = ttk.Combobox(frame_unlock, textvariable=cat_var, state="readonly", font=("Segoe UI", 8))
-cat_dropdown['values'] = ("Học tập & Giáo dục", "Giải trí & Game", "Mạng xã hội & Chat", "Công cụ & Tiện ích")
+cat_dropdown['values'] = ("Học tập & Giáo dục", "Giải trí & Game", "Mạng xã hội & Chat")
 cat_dropdown.pack(fill="x", pady=(1, 5))
 
 tk.Label(frame_unlock, text="Địa chỉ Web hoặc tên App (VD: quizlet.com):", font=("Segoe UI", 8)).pack(anchor="w")

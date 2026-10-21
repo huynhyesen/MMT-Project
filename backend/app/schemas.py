@@ -58,6 +58,13 @@ class UsageStatsResponse(BaseModel):
     utilities_formatted: str
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
+    wakeup_hour: str = "06:00"
+    child_name: Optional[str] = "Bé An"
+    daily_limit_minutes: Optional[int] = 120
+    remaining_minutes: Optional[int] = 120
+    total_seconds: Optional[int] = 0
+    remaining_seconds: Optional[int] = 7200
+    extension_label: Optional[str] = None
     items: List[UsageItemResponse]
 
 # Schemas cho Quy tắc cho phép / chặn Web và App
@@ -97,6 +104,7 @@ class OnboardingSetupRequest(BaseModel):
     learning_limit_minutes: int = 180
     entertainment_limit_minutes: int = 45
     bedtime: str = "22:00"
+    wakeup_time: str = "06:00"
     allowed_sites: List[str] = ["khanacademy.org", "wikipedia.org", "duolingo.com"]
     blocked_sites: List[str] = ["youtube.com", "facebook.com", "discord.com", "tiktok.com", "roblox"]
     initial_tasks: Optional[List[TaskInitial]] = None
@@ -116,3 +124,54 @@ class TaskResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# Schemas cho Hồ sơ trẻ em & Đăng nhập máy
+class ChildProfileCreate(BaseModel):
+    name: str
+    avatar: Optional[str] = "🧒"
+    age: Optional[int] = 10
+    pin: Optional[str] = "1234"
+    daily_limit_minutes: Optional[int] = 120
+
+class ChildProfileResponse(BaseModel):
+    id: int
+    name: str
+    avatar: str
+    age: int
+    pin: str
+    daily_limit_minutes: int
+    is_active: bool
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class ChildLoginRequest(BaseModel):
+    child_id: int
+    pin: Optional[str] = None
+
+# Schemas cho Cảnh báo truy cập web lạ / chưa phép
+class AlertLogCreate(BaseModel):
+    target_value: str
+    reason: Optional[str] = "Truy cập web lạ chưa được cha mẹ cho phép"
+    is_web: Optional[bool] = True
+
+class AlertLogResponse(BaseModel):
+    id: int
+    target_value: str
+    reason: str
+    is_web: bool
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+# Schemas cho Cập nhật Khung giờ giới nghiêm
+class CurfewUpdateRequest(BaseModel):
+    bedtime: str = "22:00"
+    wakeup_time: str = "06:00"
+
+class CurfewResponse(BaseModel):
+    bedtime: str
+    wakeup_time: str
+    is_within_curfew: bool

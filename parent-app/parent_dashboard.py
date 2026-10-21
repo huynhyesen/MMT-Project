@@ -30,6 +30,8 @@ def save_settings():
     """Lưu cấu hình thời gian và danh sách web chặn"""
     limit = limit_var.get().strip()
     blocked_apps = blocked_text.get("1.0", tk.END).strip()
+    bedtime_val = bedtime_var.get().strip() or "22:00"
+    wakeup_val = wakeup_var.get().strip() or "06:00"
     
     if not limit or not limit.isdigit():
         messagebox.showwarning("Lỗi", "Vui lòng nhập số phút giới hạn hợp lệ!")
@@ -39,7 +41,8 @@ def save_settings():
     payload = {
         "learning_limit_minutes": int(limit),
         "entertainment_limit_minutes": 45,
-        "bedtime": "22:00",
+        "bedtime": bedtime_val,
+        "wakeup_time": wakeup_val,
         "allowed_sites": ["khanacademy.org", "wikipedia.org", "duolingo.com", "code.exe"],
         "blocked_sites": blocked_list
     }
@@ -48,7 +51,21 @@ def save_settings():
     if err:
         messagebox.showerror("Lỗi", f"Không thể lưu cấu hình: {err}")
     else:
-        messagebox.showinfo("Thành công", "✅ Đã lưu cấu hình gốc thành công! Trẻ sẽ áp dụng quy tắc này.")
+        messagebox.showinfo("Thành công", f"✅ Đã lưu cấu hình gốc thành công!\nGiờ giới nghiêm: {bedtime_val} (Khóa) → {wakeup_val} (Mở).")
+
+def load_initial_config():
+    """Tải cấu hình ban đầu từ Backend để điền vào form"""
+    data, err = send_api("/onboarding/config")
+    if not err and data:
+        if "learning_limit_minutes" in data:
+            limit_var.set(str(data["learning_limit_minutes"]))
+        if "bedtime" in data:
+            bedtime_var.set(str(data["bedtime"]))
+        if "wakeup_time" in data:
+            wakeup_var.set(str(data["wakeup_time"]))
+        if "blocked_sites" in data and isinstance(data["blocked_sites"], list):
+            blocked_text.delete("1.0", tk.END)
+            blocked_text.insert("1.0", ", ".join(data["blocked_sites"]))
 
 def load_requests():
     """Tải danh sách yêu cầu thực tế từ Backend"""
@@ -204,12 +221,22 @@ tk.Label(frame_setup, text="Thời gian dùng tối đa (phút/ngày):", font=("
 limit_var = tk.StringVar(value="120")
 tk.Entry(frame_setup, textvariable=limit_var, width=15, font=("Segoe UI", 9)).grid(row=0, column=1, sticky="w", pady=3, padx=10)
 
-tk.Label(frame_setup, text="Danh sách cấm (cách nhau dấu phẩy):", font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=3)
+tk.Label(frame_setup, text="Khung giờ giới nghiêm (Bedtime):", font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=3)
+curfew_frame = tk.Frame(frame_setup)
+curfew_frame.grid(row=1, column=1, sticky="w", pady=3, padx=10)
+tk.Label(curfew_frame, text="🌙 Khóa sau:", font=("Segoe UI", 8)).pack(side="left")
+bedtime_var = tk.StringVar(value="22:00")
+tk.Entry(curfew_frame, textvariable=bedtime_var, width=7, font=("Segoe UI", 8)).pack(side="left", padx=4)
+tk.Label(curfew_frame, text="🌅 Mở lại:", font=("Segoe UI", 8)).pack(side="left", padx=(6, 0))
+wakeup_var = tk.StringVar(value="06:00")
+tk.Entry(curfew_frame, textvariable=wakeup_var, width=7, font=("Segoe UI", 8)).pack(side="left", padx=4)
+
+tk.Label(frame_setup, text="Danh sách cấm (cách nhau dấu phẩy):", font=("Segoe UI", 9)).grid(row=2, column=0, sticky="w", pady=3)
 blocked_text = tk.Text(frame_setup, height=2, width=45, font=("Segoe UI", 9))
 blocked_text.insert("1.0", "youtube.com, facebook.com, discord, roblox")
-blocked_text.grid(row=1, column=1, sticky="w", pady=3, padx=10)
+blocked_text.grid(row=2, column=1, sticky="w", pady=3, padx=10)
 
-tk.Button(frame_setup, text="💾 Lưu Cấu Hình Gốc", bg="#d97706", fg="white", font=("Segoe UI", 9, "bold"), command=save_settings).grid(row=2, column=0, columnspan=2, pady=5, sticky="we")
+tk.Button(frame_setup, text="💾 Lưu Cấu Hình Gốc (Áp dụng thời gian & giờ khóa/mở)", bg="#d97706", fg="white", font=("Segoe UI", 9, "bold"), command=save_settings).grid(row=3, column=0, columnspan=2, pady=5, sticky="we")
 
 # --- KHU VỰC 3: YÊU CẦU TỪ CON CÁI ---
 frame_req = tk.LabelFrame(root, text=" 📩 Yêu cầu từ máy con ", font=("Segoe UI", 10, "bold"), fg="#2563eb", padx=12, pady=8)
@@ -248,8 +275,12 @@ tk.Button(reset_btn_frame, text="⏱️ Reset Thời gian", bg="#64748b", fg="wh
 tk.Button(reset_btn_frame, text="🛡️ Reset Quy tắc", bg="#64748b", fg="white", font=("Segoe UI", 8, "bold"), command=reset_rules).pack(side="left", padx=3, expand=True, fill="x")
 tk.Button(reset_btn_frame, text="⚠️ Khôi phục gốc", bg="#b91c1c", fg="white", font=("Segoe UI", 8, "bold"), command=reset_all).pack(side="left", padx=3, expand=True, fill="x")
 
+def initial_sync():
+    load_initial_config()
+    load_requests()
+
 # Tự động load dữ liệu
-root.after(500, load_requests)
+root.after(500, initial_sync)
 
 if __name__ == "__main__":
     root.mainloop()

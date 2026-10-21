@@ -24,7 +24,8 @@ class TimeLimit(Base):
     device_id = Column(String, ForeignKey("devices.id"), nullable=True)
     category = Column(String(50), nullable=False, default="OVERALL") # 'LEARNING', 'ENTERTAINMENT', 'OVERALL'
     daily_limit_minutes = Column(Integer, default=120)
-    bedtime = Column(String(10), default="22:00") # Khung giờ giới nghiêm (Bedtime Mode)
+    bedtime = Column(String(10), default="22:00") # Khung giờ bắt đầu giới nghiêm
+    wakeup_time = Column(String(10), default="06:00") # Khung giờ mở khóa lại buổi sáng
 
 class AppWebRule(Base):
     __tablename__ = "app_web_rules"
@@ -67,3 +68,24 @@ class Task(Base):
     reward_minutes = Column(Integer, default=15) # Số phút thưởng khi hoàn thành
     status = Column(String(30), default="TODO") # 'TODO', 'COMPLETED_WAITING_APPROVAL', 'APPROVED'
     created_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
+
+class ChildProfile(Base):
+    """Hồ sơ cá nhân của trẻ để đăng nhập và áp dụng cài đặt riêng"""
+    __tablename__ = "child_profiles"
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    name = Column(String(100), nullable=False)
+    avatar = Column(String(50), default="🧒")
+    age = Column(Integer, default=10)
+    pin = Column(String(10), default="1234") # Mã PIN đăng nhập
+    daily_limit_minutes = Column(Integer, default=120)
+    is_active = Column(Boolean, default=False)
+    created_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
+
+class AlertLog(Base):
+    """Nhật ký cảnh báo khi trẻ cố truy cập web lạ hoặc app bị cấm"""
+    __tablename__ = "alert_logs"
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    target_value = Column(String(255), nullable=False)
+    reason = Column(String(255), nullable=False)
+    is_web = Column(Boolean, default=True)
+    timestamp = Column(DateTime, server_default=func.now(), default=datetime.utcnow)

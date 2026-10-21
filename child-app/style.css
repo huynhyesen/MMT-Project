@@ -1,0 +1,343 @@
+/* ===================================================================
+   MMT Parental Control System - Child Portal Stylesheet
+   Góc Của Con (Child Dashboard) Design System & Stylesheet
+   =================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+
+/* --- 1. BIẾN HỆ THỐNG & PALETTE --- */
+:root {
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+    --color-primary: #2563eb;
+    --color-primary-hover: #1d4ed8;
+    --color-primary-glow: rgba(37, 99, 235, 0.35);
+
+    --color-accent-cyan: #38bdf8;
+    --color-accent-emerald: #10b981;
+    --color-accent-amber: #f59e0b;
+    --color-accent-rose: #f43f5e;
+    --color-accent-indigo: #6366f1;
+
+    --bg-main: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-sidebar: #0f172a;
+    --bg-sidebar-card: #1e293b;
+
+    --border-light: #e2e8f0;
+    --border-dark: #334155;
+
+    --shadow-soft: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 6px -1px rgba(0, 0, 0, 0.02);
+    --shadow-card: 0 10px 30px -4px rgba(15, 23, 42, 0.06), 0 4px 8px -2px rgba(15, 23, 42, 0.03);
+    --shadow-hover: 0 20px 35px -8px rgba(15, 23, 42, 0.12), 0 8px 16px -4px rgba(15, 23, 42, 0.04);
+    --shadow-glow: 0 0 25px rgba(56, 189, 248, 0.2);
+
+    --radius-sm: 0.5rem;
+    --radius-md: 0.75rem;
+    --radius-lg: 1rem;
+    --radius-xl: 1.5rem;
+    --radius-2xl: 2rem;
+
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    --transition-smooth: 250ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* --- 2. CƠ BẢN & TYPOGRAPHY --- */
+html {
+    scroll-behavior: smooth;
+    font-family: var(--font-sans);
+}
+
+body {
+    font-family: var(--font-sans);
+    background-color: var(--bg-main);
+    color: #1e293b;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+code, kbd, samp, pre, .font-mono {
+    font-family: var(--font-mono) !important;
+}
+
+/* --- 3. THANH CUỘN HIỆN ĐẠI (CUSTOM SCROLLBAR) --- */
+::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+    transition: background var(--transition-fast);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Scrollbar cho Sidebar nền tối */
+aside::-webkit-scrollbar-thumb,
+.dark-scroll::-webkit-scrollbar-thumb {
+    background: #334155;
+}
+
+aside::-webkit-scrollbar-thumb:hover,
+.dark-scroll::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+/* --- 4. THANH ĐIỀU HƯỚNG BÊN TRÁI (SIDEBAR NAV) --- */
+.nav-item {
+    position: relative;
+    font-weight: 500;
+    transition: all var(--transition-smooth);
+    border-left: 3px solid transparent;
+}
+
+.nav-item:hover {
+    transform: translateX(3px);
+    background-color: rgba(30, 41, 59, 0.7);
+    color: #ffffff;
+}
+
+.nav-item:active {
+    transform: scale(0.98);
+}
+
+.nav-item.active {
+    background: linear-gradient(90deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.8) 100%) !important;
+    color: var(--color-accent-cyan) !important;
+    border-left: 4px solid var(--color-accent-cyan) !important;
+    font-weight: 700 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), var(--shadow-glow);
+}
+
+.nav-item.active span:first-child {
+    filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.5));
+}
+
+/* --- 5. HIỆU ỨNG THẺ & KHỐI NỘI DUNG (CARDS & ELEVATION) --- */
+.card-elevated {
+    background: var(--bg-card);
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-card);
+    transition: transform var(--transition-smooth), box-shadow var(--transition-smooth);
+}
+
+.card-elevated:hover {
+    box-shadow: var(--shadow-hover);
+}
+
+.card-interactive {
+    transition: all var(--transition-smooth);
+}
+
+.card-interactive:hover {
+    transform: translateY(-2px);
+    border-color: #cbd5e1;
+    box-shadow: var(--shadow-hover);
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.glass-dark {
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* --- 6. NÚT BẤM & TƯƠNG TÁC (BUTTONS & MICRO-INTERACTIONS) --- */
+button, a.btn {
+    user-select: none;
+    -webkit-user-select: none;
+    transition: all var(--transition-smooth);
+}
+
+button:active, a.btn:active {
+    transform: scale(0.97);
+}
+
+.btn-glow-primary:hover {
+    box-shadow: 0 4px 15px var(--color-primary-glow);
+}
+
+.btn-glow-emerald:hover {
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
+}
+
+.btn-glow-rose:hover {
+    box-shadow: 0 4px 15px rgba(244, 63, 94, 0.35);
+}
+
+/* --- 7. Ô NHẬP LIỆU & BIỂU MẪU (INPUTS & FORMS) --- */
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="time"],
+select,
+textarea {
+    font-family: inherit;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="password"]:focus,
+input[type="time"]:focus,
+select:focus,
+textarea:focus {
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15) !important;
+    outline: none !important;
+}
+
+/* --- 8. ĐỒNG HỒ ĐẾM NGƯỢC (DIGITAL COUNTDOWN DISPLAY) --- */
+#countdown-display {
+    font-family: var(--font-mono);
+    letter-spacing: 0.08em;
+    text-shadow: 0 2px 10px rgba(245, 158, 11, 0.35);
+}
+
+.countdown-emerald {
+    text-shadow: 0 2px 10px rgba(16, 185, 129, 0.45);
+}
+
+.countdown-rose {
+    text-shadow: 0 2px 10px rgba(244, 63, 94, 0.45);
+}
+
+/* --- 9. THANH TIẾN TRÌNH & HIỆU ỨNG TỎA SÁNG (PROGRESS BAR & SHIMMER) --- */
+#summary-progress-bar {
+    position: relative;
+    overflow: hidden;
+}
+
+#summary-progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 60%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+    animation: progressShimmer 2.5s infinite;
+}
+
+@keyframes progressShimmer {
+    0% { left: -100%; }
+    100% { left: 200%; }
+}
+
+/* --- 10. BẢNG DỮ LIỆU & DÒNG (TABLE STYLES) --- */
+table tbody tr {
+    transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+table tbody tr:hover {
+    background-color: #f8fafc;
+}
+
+/* --- 11. HUY HIỆU & TRẠNG THÁI (BADGES & PILLS) --- */
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.status-pulse-emerald {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+    animation: pulseRingEmerald 2s infinite;
+}
+
+@keyframes pulseRingEmerald {
+    0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+    70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* --- 12. THÔNG BÁO TOAST & ANIMATIONS --- */
+.toast {
+    animation: toastSlideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+@keyframes toastSlideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.animate-scaleUp {
+    animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes scaleUp {
+    from {
+        opacity: 0;
+        transform: scale(0.92);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.pulse-subtle {
+    animation: pulseSubtle 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulseSubtle {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.85; transform: scale(1.02); }
+}
+
+/* Shake nhẹ khi có cảnh báo web lạ */
+.shake-subtle {
+    animation: gentleShake 0.5s ease-in-out;
+}
+
+@keyframes gentleShake {
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-4px); }
+    40%, 80% { transform: translateX(4px); }
+}
+
+/* --- 13. RESPONSIVE POLISH CHO THIẾT BỊ DI ĐỘNG --- */
+@media (max-width: 768px) {
+    .nav-item {
+        border-left: none;
+        border-bottom: 2px solid transparent;
+    }
+    .nav-item.active {
+        border-left: none !important;
+        border-bottom: 3px solid var(--color-accent-cyan) !important;
+    }
+    #countdown-display {
+        font-size: 2.25rem;
+    }
+}

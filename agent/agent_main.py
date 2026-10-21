@@ -29,7 +29,8 @@ ALLOWED_TARGETS = set()
 
 IGNORE_SYSTEM_PROCS = {
     "system", "registry", "svchost.exe", "systemd", "kworker", "dbus-daemon", 
-    "pipewire", "pulseaudio", "xorg", "gnome-shell", "bash", "python3", "python"
+    "pipewire", "pulseaudio", "xorg", "gnome-shell", "bash", "python3", "python",
+    "kthreadd", "pool_workqueue", "rcu_", "irq/", "ksoftirqd", "migration"
 }
 
 active_ws = None
@@ -48,12 +49,10 @@ def sync_allowed_rules():
                         val = extract_domain(r.get("target_value", ""))
                         if val:
                             ALLOWED_TARGETS.add(val.lower())
+                print(f"🔄 [AGENT] Đã đồng bộ {len(ALLOWED_TARGETS)} mục được phép: {ALLOWED_TARGETS}")
                 return
         except Exception:
             continue
-            print(f"🔄 [AGENT] Đã đồng bộ {len(ALLOWED_TARGETS)} mục được phép: {ALLOWED_TARGETS}")
-    except Exception as e:
-        print(f"⚠️ [AGENT] Chưa thể đồng bộ rules từ server: {e}")
 
 def send_telemetry(app_name: str, duration_sec: int = 10):
     """Gửi dữ liệu thời lượng hoạt động của ứng dụng về Backend."""
@@ -97,6 +96,23 @@ async def monitor_apps_task():
                 enforce_block_policy(app_name, "Cần xin phép phụ huynh trước khi sử dụng ứng dụng này", "Phụ huynh")
                 kill_blocked_process(app_name)
                 
+                # Ghi nhận cảnh báo về máy chủ Backend
+                try:
+                    alert_payload = json.dumps({
+                        "target_value": app_name,
+                        "reason": f"Cố mở ứng dụng/web '{app_name}' chưa được cha mẹ cho phép",
+                        "is_web": False
+                    }).encode("utf-8")
+                    req = urllib.request.Request(
+                        f"{BACKEND_HTTP}/alerts/",
+                        data=alert_payload,
+                        headers={"Content-Type": "application/json"},
+                        method="POST"
+                    )
+                    urllib.request.urlopen(req, timeout=1)
+                except Exception:
+                    pass
+
                 if active_ws:
                     try:
                         await active_ws.send(json.dumps({
@@ -169,13 +185,41 @@ async def listen_to_server():
             print(f"⚠️ Mất kết nối tới Server. Thử lại sau 5 giây... ({e})")
             await asyncio.sleep(5)
 
+bedtime_locked = False
+
+async def check_bedtime_task():
+    """Tác vụ kiểm tra định kỳ khung giờ giới nghiêm (Bedtime Mode).
+    Vô hiệu hóa máy tính sau bedtime (mặc định 22:00) và tự động mở lại vào wakeup (mặc định 06:00).
+    """
+    global bedtime_locked, BACKEND_HTTP
+    while True:
+        try:
+            req = urllib.request.Request(f"{BACKEND_HTTP}/usage-stats/")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                is_bedtime = data.get("is_bedtime", False)
+                b_hour = data.get("bedtime_hour", "22:00")
+                w_hour = data.get("wakeup_hour", "06:00")
+
+                if is_bedtime and not bedtime_locked:
+                    bedtime_locked = True
+                    print(f"🌙 [AGENT] Đã vào giờ giới nghiêm ({b_hour} -> {w_hour})! Tự động vô hiệu hóa máy tính để con nghỉ ngơi...")
+                    lock_system()
+                elif not is_bedtime and bedtime_locked:
+                    bedtime_locked = False
+                    print(f"🌅 [AGENT] Đã đến {w_hour} sáng! Kết thúc giờ giới nghiêm, mở lại hệ thống cho con.")
+        except Exception:
+            pass
+        await asyncio.sleep(20)
+
 async def main():
     print("🚀 [NT1] Trợ lý an toàn máy tính đã khởi động.")
     sync_allowed_rules()
     block_websites(BLOCKED_DOMAINS)
     await asyncio.gather(
         monitor_apps_task(),
-        listen_to_server()
+        listen_to_server(),
+        check_bedtime_task()
     )
 
 if __name__ == "__main__":
