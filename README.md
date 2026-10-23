@@ -155,8 +155,8 @@ python3 -m venv .venv
 source .venv/bin/activate    # Trên Linux/macOS
 # hoặc: .venv\Scripts\activate trên Windows
 
-# Cài đặt các thư viện cần thiết
-pip install -r backend/requirements.txt
+# Cài đặt các thư viện cần thiết cho toàn bộ hệ thống (Backend & Client Agent)
+pip install -r requirements.txt
 ```
 
 ---

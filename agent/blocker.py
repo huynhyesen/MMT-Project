@@ -5,6 +5,12 @@ import psutil
 # Cấu hình IP chuyển hướng cho cả IPv4 và IPv6
 REDIRECT_IP_V4 = "127.0.0.1"
 REDIRECT_IP_V6 = "::1"
+MMT_TAG = "# MMT_BLOCK"
+
+# Danh sách tất cả các tên miền cấm mặc định và phát sinh trong phiên hoạt động
+MANAGED_DOMAINS = {
+    "youtube.com", "facebook.com", "discord.com", "tiktok.com", "roblox.com"
+}
 
 # Xác định đường dẫn file hosts tùy theo hệ điều hành hoặc biến môi trường tùy chỉnh
 HOSTS_PATH = os.environ.get("MMT_HOSTS_PATH") or (
@@ -82,12 +88,15 @@ def kill_blocked_process(process_target: str):
 def block_websites(website_list: list):
     """
     Thêm các trang web bị cấm vào file hosts để chặn truy cập (bao gồm IPv4 và IPv6).
+    Tự động đánh dấu tag # MMT_BLOCK để dọn dẹp sạch khi tắt app.
     """
+    global MANAGED_DOMAINS
     clean_domains = set()
     for website in website_list:
         domain = extract_domain(website)
         if domain:
             clean_domains.add(domain)
+            MANAGED_DOMAINS.add(domain)
 
     if not clean_domains:
         return
@@ -95,19 +104,19 @@ def block_websites(website_list: list):
     try:
         if not os.path.exists(HOSTS_PATH):
             return
-        with open(HOSTS_PATH, "r") as file:
+        with open(HOSTS_PATH, "r", encoding="utf-8", errors="ignore") as file:
             content = file.read()
             
         entries_to_add = []
         for domain in clean_domains:
             if f" {domain}" not in content:
-                entries_to_add.append(f"{REDIRECT_IP_V4} {domain}")
-                entries_to_add.append(f"{REDIRECT_IP_V4} www.{domain}")
-                entries_to_add.append(f"{REDIRECT_IP_V6} {domain}")
-                entries_to_add.append(f"{REDIRECT_IP_V6} www.{domain}")
+                entries_to_add.append(f"{REDIRECT_IP_V4} {domain} {MMT_TAG}")
+                entries_to_add.append(f"{REDIRECT_IP_V4} www.{domain} {MMT_TAG}")
+                entries_to_add.append(f"{REDIRECT_IP_V6} {domain} {MMT_TAG}")
+                entries_to_add.append(f"{REDIRECT_IP_V6} www.{domain} {MMT_TAG}")
 
         if entries_to_add:
-            with open(HOSTS_PATH, "a") as file:
+            with open(HOSTS_PATH, "a", encoding="utf-8") as file:
                 file.write("\n" + "\n".join(entries_to_add) + "\n")
             print(f"🛑 [HOSTS] Đã chặn website mức mạng qua hosts: {', '.join(clean_domains)}")
     except PermissionError:
@@ -132,7 +141,7 @@ def unblock_websites(website_list: list):
     try:
         if not os.path.exists(HOSTS_PATH):
             return
-        with open(HOSTS_PATH, "r") as file:
+        with open(HOSTS_PATH, "r", encoding="utf-8", errors="ignore") as file:
             lines = file.readlines()
             
         modified = False
@@ -145,13 +154,69 @@ def unblock_websites(website_list: list):
             new_lines.append(line)
 
         if modified:
-            with open(HOSTS_PATH, "w") as file:
+            with open(HOSTS_PATH, "w", encoding="utf-8") as file:
                 file.writelines(new_lines)
             print(f"✅ [HOSTS] Đã gỡ chặn file hosts cho: {', '.join(clean_domains)}")
     except PermissionError:
         print(f"⚠️ [HOSTS] Cần quyền Administrator/Root để chỉnh sửa file {HOSTS_PATH} gỡ chặn: {', '.join(clean_domains)}")
     except Exception as e:
         print(f"⚠️ [HOSTS] Không thể gỡ chặn file hosts: {e}")
+
+def unblock_all_websites() -> bool:
+    """
+    Xóa toàn bộ các quy tắc chặn của MMT khỏi file hosts khi tắt ứng dụng trên máy con.
+    Đảm bảo trả lại trạng thái mạng nguyên bản, không chặn bất kỳ trang nào.
+    """
+    global MANAGED_DOMAINS
+    try:
+        if not os.path.exists(HOSTS_PATH):
+            return False
+        with open(HOSTS_PATH, "r", encoding="utf-8", errors="ignore") as file:
+            lines = file.readlines()
+
+        modified = False
+        new_lines = []
+        system_hosts = {"localhost", "broadcasthost", "ip6-localhost", "ip6-loopback", "local"}
+
+        for line in lines:
+            line_str = line.strip()
+
+            # 1. Bỏ qua thẻ MMT_TAG hoặc chú thích MMT
+            if MMT_TAG in line or "MMT PARENTAL CONTROL" in line or "END MMT BLOCK" in line:
+                modified = True
+                continue
+
+            # 2. Xóa các dòng trỏ về 127.0.0.1 / ::1 / 0.0.0.0 đối với các tên miền do MMT quản lý
+            parts = [p.lower() for p in line_str.split()]
+            if len(parts) >= 2 and parts[0] in (REDIRECT_IP_V4, REDIRECT_IP_V6, "127.0.0.1", "::1", "0.0.0.0"):
+                target_host = parts[1]
+                clean_target = extract_domain(target_host)
+                if clean_target not in system_hosts:
+                    if any(clean_target == d or clean_target.endswith("." + d) for d in MANAGED_DOMAINS):
+                        modified = True
+                        continue
+
+            new_lines.append(line)
+
+        if modified:
+            # Dọn bớt khoảng trắng liên tiếp ở cuối
+            while new_lines and not new_lines[-1].strip():
+                new_lines.pop()
+            new_lines.append("\n")
+
+            with open(HOSTS_PATH, "w", encoding="utf-8") as file:
+                file.writelines(new_lines)
+            print("✅ [HOSTS] Đã xóa sạch toàn bộ danh sách chặn trong file hosts khi tắt app!")
+            return True
+        else:
+            print("ℹ️ [HOSTS] File hosts sạch, không có quy tắc chặn nào tồn đọng.")
+            return True
+    except PermissionError:
+        print(f"⚠️ [HOSTS] Cần quyền Administrator/Root để xóa quy tắc chặn trong {HOSTS_PATH}!")
+        return False
+    except Exception as e:
+        print(f"⚠️ [HOSTS] Lỗi khi dọn dẹp file hosts: {e}")
+        return False
 
 def lock_system():
     """
@@ -167,3 +232,11 @@ def lock_system():
             print("🔒 [BLOCKER] Đã gọi lệnh khóa màn hình Linux.")
     except Exception as e:
         print(f"⚠️ [BLOCKER] Không thể khóa hệ thống: {e}")
+
+if __name__ == "__main__":
+    import sys
+    if "--unblock-all" in sys.argv or "-u" in sys.argv:
+        print("🧹 Đang gỡ bỏ toàn bộ quy tắc chặn trong file hosts...")
+        unblock_all_websites()
+    else:
+        print("Sử dụng: python blocker.py --unblock-all (để gỡ bỏ toàn bộ danh sách chặn)")

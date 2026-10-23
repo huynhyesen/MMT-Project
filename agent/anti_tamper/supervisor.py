@@ -101,7 +101,12 @@ class AntiTamperSupervisor:
                 self.process.wait(timeout=2)
             except Exception:
                 self.process.kill()
-        print("🛑 [ANTI-TAMPER] Dịch vụ Agent đã dừng.")
+        try:
+            from blocker import unblock_all_websites
+            unblock_all_websites()
+        except Exception:
+            pass
+        print("🛑 [ANTI-TAMPER] Dịch vụ Agent đã dừng và toàn bộ danh sách chặn file hosts đã được xóa sạch.")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--test-tamper":

@@ -58,6 +58,17 @@ def auto_migrate_db():
 
 auto_migrate_db()
 
+# Kích hoạt dịch vụ tự động nhận diện trên mạng Wi-Fi (UDP LAN Discovery)
+try:
+    import sys
+    AGENT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "agent")
+    if AGENT_DIR not in sys.path:
+        sys.path.insert(0, AGENT_DIR)
+    from lan_discovery import start_discovery_responder
+    start_discovery_responder(http_port=8008)
+except Exception:
+    pass
+
 app = FastAPI(title="Parental Control Backend", version="1.3.0")
 
 app.add_middleware(
