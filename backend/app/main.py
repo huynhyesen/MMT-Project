@@ -16,6 +16,21 @@ import uuid
 from . import database, models, schemas
 from fastapi.middleware.cors import CORSMiddleware
 
+from .services.classification import (
+    extract_target_name,
+    is_system_process,
+    classify_item
+)
+
+from .services.formatters import (
+    format_duration,
+    format_remaining,
+    is_within_curfew
+)
+
+from .services.realtime import manager
+
+
 # Tự động tạo bảng database nếu chưa tồn tại
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -174,196 +189,9 @@ def read_root(request: Request):
     }
 
 # ==========================================
-# CÁC HÀM TIỆN ÍCH PHÂN LOẠI & ĐỊNH DẠNG
-# ==========================================
-def extract_target_name(target: str) -> str:
-    """Trích xuất tên miền hoặc tên phần mềm sạch (bỏ giao thức, www, nhãn...)."""
-    if not target:
-        return ""
-    t = target.split("[")[0].strip()
-    if "://" in t:
-        t = t.split("://")[1]
-    t = t.split("/")[0].split("?")[0].split(":")[0]
-    if t.lower().startswith("www."):
-        t = t[4:]
-    return t
-
-def is_system_process(name: str) -> bool:
-    nl = name.lower().strip()
-    if any(nl.startswith(prefix) for prefix in ['kworker', 'kthread', 'rcu', 'pool_', 'irq/', 'ksoftirqd', 'systemd', 'migration', 'auditd']):
-        return True
-    return nl in {
-        'system', 'registry', 'svchost.exe', 'dbus-daemon', 'pipewire', 'pulseaudio', 
-        'xorg', 'gnome-shell', 'bash', 'sh', 'python', 'python3', 'uvicorn', 'idle',
-        'kthreadd', 'pool_workqueue_release', 'rcu_tasks_kthread'
-    }
-
-def classify_item(name: str) -> dict:
-    """Hệ thống AI phân loại và gán nhãn tự động cho website & ứng dụng."""
-    if not name or is_system_process(name):
-        return {
-            'category': 'Ứng dụng khác',
-            'tag': 'OTHER',
-            'icon': '💻',
-            'badge_color': 'bg-slate-100 text-slate-800 border-slate-300',
-            'default_limit': 60,
-            'is_educational': False
-        }
-
-    nl = name.lower().strip()
-    
-    # 1. Học tập & Giáo dục (LEARNING)
-    learning_keywords = [
-        'khanacademy', 'wikipedia', 'duolingo', 'scratch', 'coursera', 'edx', 'udemy', 'quizlet', 
-        'canvas', 'blackboard', 'hocmai', 'vioedu', 'vnedu', 'olm', 'k12online', 'vietjack', 
-        'tuyensinh247', 'geogebra', 'code.org', 'w3schools', 'leetcode', 'hackerrank', 'stackoverflow', 
-        'github', 'gitlab', 'python', 'sachmem', 'violet.vn', 'word', 'excel', 'powerpoint', 
-        'onenote', 'acrobat', 'reader', 'pdf', 'zoom', 'teams', 'classroom', 'meet',
-        '.edu', 'school', 'portal', 'lophoc', 'trithuc', 'tienganh', 'toan', 'vatly', 
-        'hoahoc', 'lichsu', 'dialy', 'ielts', 'toeic', 'learn', 'study', 'math'
-    ]
-    if any(k in nl for k in learning_keywords):
-        return {
-            'category': 'Học tập & Giáo dục',
-            'tag': 'LEARNING',
-            'icon': '📚',
-            'badge_color': 'bg-emerald-100 text-emerald-800 border-emerald-300',
-            'default_limit': 180,
-            'is_educational': True
-        }
-    
-    # 2. Giải trí & Game (ENTERTAINMENT)
-    entertainment_keywords = [
-        'youtube', 'youtu.be', 'netflix', 'spotify', 'roblox', 'minecraft', 'steam', 'epicgames', 
-        'league', 'valorant', 'genshin', 'fifa', 'pubg', 'game', 'friv', 'poki', 'bilibili', 
-        'twitch', 'anime', 'manga', 'truyen', 'comic', 'zingmp3', 'nhaccuatui', 'fptplay', 
-        'vieon', 'movie', 'film', 'cinema', 'chess', 'cotuong', 'caro', 'webtoon', 'soundcloud',
-        'apple music', 'zing', 'vtvgo', 'clip', 'video'
-    ]
-    if any(k in nl for k in entertainment_keywords):
-        return {
-            'category': 'Giải trí & Game',
-            'tag': 'ENTERTAINMENT',
-            'icon': '🎮',
-            'badge_color': 'bg-rose-100 text-rose-800 border-rose-300',
-            'default_limit': 45,
-            'is_educational': False
-        }
-        
-    # 3. Mạng xã hội & Chat (SOCIAL)
-    social_keywords = [
-        'discord', 'facebook', 'fb.com', 'messenger', 'zalo', 'telegram', 'tiktok', 'instagram', 
-        'threads', 'twitter', 'x.com', 'skype', 'viber', 'whatsapp', 'wechat', 'reddit', 
-        'pinterest', 'snapchat', 'tumblr', 'chat', 'direct'
-    ]
-    if any(k in nl for k in social_keywords):
-        return {
-            'category': 'Mạng xã hội & Chat',
-            'tag': 'SOCIAL',
-            'icon': '💬',
-            'badge_color': 'bg-blue-100 text-blue-800 border-blue-300',
-            'default_limit': 30,
-            'is_educational': False
-        }
-        
-    # 4. Công cụ & Tiện ích (UTILITY)
-    utility_keywords = [
-        'google', 'bing', 'chrome', 'edge', 'firefox', 'safari', 'brave', 'coccoc', 'opera', 
-        'calc', 'calculator', 'paint', 'notepad', 'notes', 'canva', 'figma', 'photoshop', 
-        'gimp', 'audacity', 'vlc', 'terminal', 'cmd', 'calendar', 'clock'
-    ]
-    if any(k in nl for k in utility_keywords):
-        return {
-            'category': 'Công cụ & Tiện ích',
-            'tag': 'UTILITY',
-            'icon': '🛠️',
-            'badge_color': 'bg-amber-100 text-amber-800 border-amber-300',
-            'default_limit': 60,
-            'is_educational': False
-        }
-
-    # 5. Ứng dụng khác (OTHER)
-    return {
-        'category': 'Ứng dụng khác',
-        'tag': 'OTHER',
-        'icon': '💻',
-        'badge_color': 'bg-slate-100 text-slate-800 border-slate-300',
-        'default_limit': 60,
-        'is_educational': False
-    }
-
-def format_duration(minutes: int) -> str:
-    if minutes < 60:
-        return f"{minutes} phút"
-    hours = minutes // 60
-    rem = minutes % 60
-    return f"{hours} giờ {rem} phút" if rem else f"{hours} giờ"
-
-def format_remaining(limit_mins: int, used_mins: int) -> tuple[int, str, bool]:
-    if limit_mins <= 0:
-        return (9999, "Không giới hạn", False)
-    rem = limit_mins - used_mins
-    if rem <= 0:
-        return (0, "Đã hết giờ (0 phút)", True)
-    return (rem, f"Còn {format_duration(rem)}", False)
-
-def is_within_curfew(bedtime_str: str, wakeup_str: str, now: datetime = None) -> bool:
-    """Kiểm tra thời điểm hiện tại có nằm trong khung giờ giới nghiêm (sau bedtime đến wakeup sáng) hay không."""
-    if not bedtime_str or not wakeup_str:
-        return False
-    if now is None:
-        now = datetime.now()
-    try:
-        from datetime import time as dtime
-        b_hour, b_min = map(int, bedtime_str.split(":"))
-        w_hour, w_min = map(int, wakeup_str.split(":"))
-        now_time = now.time()
-        b_time = dtime(b_hour, b_min)
-        w_time = dtime(w_hour, w_min)
-
-        if b_time > w_time:
-            # Ví dụ: 22:00 tối đến 06:00 sáng hôm sau
-            # Bị khóa nếu >= 22:00 HOẶC < 06:00
-            return now_time >= b_time or now_time < w_time
-        elif b_time < w_time:
-            # Khung giờ trong cùng 1 ngày
-            return b_time <= now_time < w_time
-        else:
-            return False
-    except Exception:
-        return False
-
-# ==========================================
 # QUẢN LÝ KẾT NỐI WEBSOCKET THỜI GIAN THỰC
 # ==========================================
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: dict[WebSocket, str] = {}
 
-    async def connect(self, device_id: str, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections[websocket] = device_id
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            del self.active_connections[websocket]
-
-    async def broadcast_text(self, message: str, sender_ws: WebSocket = None):
-        dead_connections = []
-        for ws in list(self.active_connections.keys()):
-            if ws != sender_ws:
-                try:
-                    await ws.send_text(message)
-                except Exception:
-                    dead_connections.append(ws)
-        for ws in dead_connections:
-            self.disconnect(ws)
-
-    async def broadcast_json(self, data: dict, sender_ws: WebSocket = None):
-        msg = json.dumps(data)
-        await self.broadcast_text(msg, sender_ws=sender_ws)
-
-manager = ConnectionManager()
 
 @app.websocket("/ws/agent/{device_id}")
 async def websocket_endpoint(websocket: WebSocket, device_id: str):
@@ -442,277 +270,19 @@ async def remote_message(payload: dict):
     })
     return {"status": "success", "message": "Đã gửi thông điệp tới máy con!"}
 
-# ==========================================
-# 0.1. QUẢN LÝ THIẾT BỊ, GHÉP NỐI & CLOUD RELAY (WAN SYNC)
-# ==========================================
-def generate_pairing_code() -> str:
-    """Tạo mã ghép nối ngẫu nhiên 6 ký tự dễ đọc (VD: MMT-8942)."""
-    digits = ''.join(random.choices(string.digits, k=4))
-    return f"MMT-{digits}"
 
-@app.post("/devices/create", response_model=schemas.DeviceResponse)
-async def create_device_profile(dev_data: schemas.DeviceCreateRequest, db: Session = Depends(database.get_db)):
-    """Phụ huynh tạo hồ sơ thiết bị cho con và thiết lập quy tắc ban đầu."""
-    # Sinh mã ghép nối duy nhất
-    code = generate_pairing_code()
-    for _ in range(10):
-        if not db.query(models.Device).filter(models.Device.pairing_code == code).first():
-            break
-        code = generate_pairing_code()
+####    API 
 
-    new_dev = models.Device(
-        device_name=dev_data.device_name.strip(),
-        pairing_code=code,
-        child_profile_id=dev_data.child_profile_id,
-        status="PENDING_PAIR",
-        is_paired=False,
-        anti_tamper_active=True,
-        content_filter_active=True
-    )
-    db.add(new_dev)
-    db.commit()
-    db.refresh(new_dev)
+from .routers import devices, relay 
 
-    # Thêm các quy tắc web/game chặn ban đầu nếu phụ huynh chọn
-    if dev_data.blocked_items:
-        for item in dev_data.blocked_items:
-            clean = extract_target_name(item)
-            if clean:
-                r_type = "WEBSITE" if "." in clean else "APP"
-                existing = db.query(models.AppWebRule).filter(models.AppWebRule.target_value == clean).first()
-                if not existing:
-                    db.add(models.AppWebRule(
-                        device_id=new_dev.id,
-                        rule_type=r_type,
-                        target_value=clean,
-                        action="BLOCK",
-                        time_limit_minutes=30,
-                        used_minutes=0
-                    ))
-        db.commit()
+app.include_router(devices.router)
 
-    # Cập nhật hạn mức cho hồ sơ con nếu có
-    if dev_data.child_profile_id:
-        child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev_data.child_profile_id).first()
-        if child and dev_data.daily_limit_minutes:
-            child.daily_limit_minutes = dev_data.daily_limit_minutes
-            db.commit()
+app.include_router(relay.router)
 
-    child_name = None
-    if new_dev.child_profile_id:
-        c = db.query(models.ChildProfile).filter(models.ChildProfile.id == new_dev.child_profile_id).first()
-        if c: child_name = c.name
+######
 
-    await manager.broadcast_json({
-        "type": "DEVICE_CREATED",
-        "device_id": new_dev.id,
-        "device_name": new_dev.device_name,
-        "pairing_code": new_dev.pairing_code
-    })
 
-    return schemas.DeviceResponse(
-        id=new_dev.id,
-        device_name=new_dev.device_name,
-        device_hwid=new_dev.device_hwid,
-        pairing_code=new_dev.pairing_code,
-        is_paired=new_dev.is_paired,
-        status=new_dev.status,
-        child_profile_id=new_dev.child_profile_id,
-        child_name=child_name,
-        platform=new_dev.platform,
-        anti_tamper_active=new_dev.anti_tamper_active,
-        content_filter_active=new_dev.content_filter_active,
-        last_seen=new_dev.last_seen,
-        created_at=new_dev.created_at
-    )
 
-@app.post("/devices/pair", response_model=schemas.DeviceConfigResponse)
-async def pair_device(pair_data: schemas.DevicePairRequest, db: Session = Depends(database.get_db)):
-    """Agent trên máy con gửi mã phần cứng (device_hwid) và mã pairing_code để liên kết và tải cấu hình gốc."""
-    code = pair_data.pairing_code.strip().upper()
-    dev = db.query(models.Device).filter(
-        func.upper(models.Device.pairing_code) == code
-    ).first()
-
-    if not dev:
-        raise HTTPException(status_code=404, detail="Mã ghép nối không hợp lệ hoặc đã hết hạn.")
-
-    dev.device_hwid = pair_data.device_hwid
-    dev.is_paired = True
-    dev.status = "ONLINE_WAN"
-    dev.platform = pair_data.platform or "Linux"
-    if pair_data.ip_address:
-        dev.ip_address = pair_data.ip_address
-    dev.last_seen = datetime.utcnow()
-    dev.pairing_token = str(uuid.uuid4())
-    db.commit()
-    db.refresh(dev)
-
-    # Lấy thông tin cấu hình của phụ huynh
-    child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev.child_profile_id).first() if dev.child_profile_id else None
-    daily_limit = child.daily_limit_minutes if child else 120
-    child_name = child.name if child else "Bé An"
-
-    time_limit = db.query(models.TimeLimit).first()
-    bedtime = time_limit.bedtime if time_limit and time_limit.bedtime else "22:00"
-    wakeup = time_limit.wakeup_time if time_limit and time_limit.wakeup_time else "06:00"
-
-    rules = db.query(models.AppWebRule).all()
-    allowed = [r.target_value for r in rules if r.action == "ALLOW"]
-    blocked = [r.target_value for r in rules if r.action == "BLOCK"]
-
-    await manager.broadcast_json({
-        "type": "DEVICE_PAIRED",
-        "device_id": dev.id,
-        "device_name": dev.device_name,
-        "device_hwid": dev.device_hwid,
-        "child_name": child_name,
-        "platform": dev.platform
-    })
-
-    return schemas.DeviceConfigResponse(
-        device_hwid=dev.device_hwid,
-        device_name=dev.device_name,
-        child_name=child_name,
-        daily_limit_minutes=daily_limit,
-        bedtime=bedtime,
-        wakeup_time=wakeup,
-        allowed_rules=allowed,
-        blocked_rules=blocked,
-        anti_tamper_enabled=dev.anti_tamper_active,
-        content_filter_enabled=dev.content_filter_active,
-        admin_password_hash=hashlib.sha256("admin123".encode()).hexdigest()
-    )
-
-@app.get("/devices/", response_model=List[schemas.DeviceResponse])
-def get_devices(db: Session = Depends(database.get_db)):
-    """Lấy danh sách các thiết bị máy con đã đăng ký hoặc đang quản lý."""
-    devices = db.query(models.Device).order_by(models.Device.created_at.desc()).all()
-    results = []
-    for d in devices:
-        c_name = None
-        if d.child_profile_id:
-            c = db.query(models.ChildProfile).filter(models.ChildProfile.id == d.child_profile_id).first()
-            if c: c_name = c.name
-        
-        # Cập nhật trạng thái
-        current_status = d.status
-        if d.device_hwid and (d.device_hwid in manager.active_connections or d.id in manager.active_connections):
-            current_status = "ONLINE_WAN"
-        elif not d.is_paired:
-            current_status = "PENDING_PAIR"
-            
-        results.append(schemas.DeviceResponse(
-            id=d.id,
-            device_name=d.device_name,
-            device_hwid=d.device_hwid,
-            pairing_code=d.pairing_code,
-            is_paired=d.is_paired,
-            status=current_status,
-            child_profile_id=d.child_profile_id,
-            child_name=c_name,
-            platform=d.platform,
-            anti_tamper_active=d.anti_tamper_active,
-            content_filter_active=d.content_filter_active,
-            last_seen=d.last_seen,
-            created_at=d.created_at
-        ))
-    return results
-
-@app.get("/devices/{hwid}/config", response_model=schemas.DeviceConfigResponse)
-def get_device_config(hwid: str, db: Session = Depends(database.get_db)):
-    """Agent định kỳ tải cấu hình cập nhật từ phụ huynh."""
-    dev = db.query(models.Device).filter(models.Device.device_hwid == hwid).first()
-    if not dev:
-        dev = db.query(models.Device).filter(models.Device.id == hwid).first()
-    if not dev:
-        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
-
-    dev.last_seen = datetime.utcnow()
-    db.commit()
-
-    child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev.child_profile_id).first() if dev.child_profile_id else None
-    daily_limit = child.daily_limit_minutes if child else 120
-    child_name = child.name if child else "Bé An"
-
-    time_limit = db.query(models.TimeLimit).first()
-    bedtime = time_limit.bedtime if time_limit and time_limit.bedtime else "22:00"
-    wakeup = time_limit.wakeup_time if time_limit and time_limit.wakeup_time else "06:00"
-
-    rules = db.query(models.AppWebRule).all()
-    allowed = [r.target_value for r in rules if r.action == "ALLOW"]
-    blocked = [r.target_value for r in rules if r.action == "BLOCK"]
-
-    return schemas.DeviceConfigResponse(
-        device_hwid=dev.device_hwid or hwid,
-        device_name=dev.device_name,
-        child_name=child_name,
-        daily_limit_minutes=daily_limit,
-        bedtime=bedtime,
-        wakeup_time=wakeup,
-        allowed_rules=allowed,
-        blocked_rules=blocked,
-        anti_tamper_enabled=dev.anti_tamper_active,
-        content_filter_enabled=dev.content_filter_active,
-        admin_password_hash=hashlib.sha256("admin123".encode()).hexdigest()
-    )
-
-@app.delete("/devices/{device_id}")
-def delete_device(device_id: str, db: Session = Depends(database.get_db)):
-    """Hủy liên kết và xóa thiết bị."""
-    dev = db.query(models.Device).filter(models.Device.id == device_id).first()
-    if not dev:
-        dev = db.query(models.Device).filter(models.Device.device_hwid == device_id).first()
-    if not dev:
-        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
-    db.delete(dev)
-    db.commit()
-    return {"status": "success", "message": "Đã xóa thiết bị thành công"}
-
-@app.websocket("/ws/relay/{device_hwid}")
-async def cloud_relay_endpoint(websocket: WebSocket, device_hwid: str):
-    """Kênh WebSocket Cloud Relay dành cho máy con kết nối từ xa qua WAN (Bỏ qua NAT/Firewall)."""
-    await manager.connect(device_hwid, websocket)
-    try:
-        await manager.broadcast_json({
-            "type": "DEVICE_CONNECTED_WAN",
-            "device_hwid": device_hwid,
-            "message": f"Thiết bị {device_hwid} đã kết nối từ xa qua Cloud Relay thành công!"
-        })
-        while True:
-            data = await websocket.receive_text()
-            try:
-                msg = json.loads(data)
-                mtype = msg.get("type", "")
-                if mtype == "PING":
-                    await websocket.send_text(json.dumps({"type": "PONG", "timestamp": time.time()}))
-                    continue
-                await manager.broadcast_json(msg, sender_ws=websocket)
-            except Exception:
-                await manager.broadcast_text(data, sender_ws=websocket)
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        await manager.broadcast_json({
-            "type": "DEVICE_DISCONNECTED_WAN",
-            "device_hwid": device_hwid
-        })
-
-@app.post("/relay/command")
-async def send_relay_command(payload: dict):
-    """Gửi lệnh điều khiển từ xa qua Cloud Relay tới máy con qua WAN."""
-    target_hwid = payload.get("target_hwid")
-    action = payload.get("action", "MESSAGE")
-    data = payload.get("data", {})
-
-    msg = {
-        "type": action,
-        "target_hwid": target_hwid,
-        "sender": "parent_cloud",
-        "data": data,
-        "timestamp": time.time()
-    }
-    await manager.broadcast_json(msg)
-    return {"status": "success", "message": f"Đã gửi lệnh {action} qua Cloud Relay tới {target_hwid or 'tất cả thiết bị'}"}
 
 @app.post("/ai/content-check", response_model=schemas.ContentFilterResult)
 def api_content_check(req: schemas.ContentFilterAnalysisRequest):
