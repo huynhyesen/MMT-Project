@@ -19,6 +19,13 @@ if exist .venv\Scripts\activate.bat (
     call .venv\Scripts\activate.bat
 )
 
+:: Cài psutil nếu chưa có (cần thiết cho blocker.py)
+python -c "import psutil" >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [*] Đang cài đặt thư viện cần thiết...
+    pip install psutil
+)
+
 echo [*] Đang tiến hành xóa sạch toàn bộ quy tắc chặn trong file hosts...
 python -c "import sys; sys.path.insert(0, 'agent'); from blocker import unblock_all_websites; unblock_all_websites()"
 

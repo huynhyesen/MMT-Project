@@ -11,8 +11,25 @@ echo "      MMT PARENTAL CONTROL - TRỢ LÝ AN TOÀN MÁY CON"
 echo "========================================================"
 echo ""
 
-if [ -d ".venv" ]; then
-    source .venv/bin/activate
+# 1. Tạo môi trường ảo nếu chưa có
+if [ ! -d ".venv" ]; then
+    echo "[*] Đang tạo môi trường ảo Python (.venv)..."
+    python3 -m venv .venv
+    if [ $? -ne 0 ]; then
+        echo "[LỖI] Không thể tạo venv! Hãy cài đặt: sudo apt install python3-venv"
+        exit 1
+    fi
+fi
+
+# 2. Kích hoạt môi trường ảo
+source .venv/bin/activate
+
+# 3. Kiểm tra thư viện
+python3 -c "import websockets, psutil" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "[*] Đang cài đặt thư viện cần thiết..."
+    pip install -r requirements.txt
+    echo ""
 fi
 
 # Tự động gỡ bỏ danh sách chặn khi tắt / thoát script

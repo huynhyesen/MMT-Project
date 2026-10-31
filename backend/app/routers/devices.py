@@ -1,11 +1,8 @@
-
-import hashlib
 import secrets
 import string
 import uuid
 
-from datetime import datetime
-from typing import List
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
@@ -16,23 +13,22 @@ from ..services.classification import extract_target_name
 from ..services.realtime import manager
 
 
-router = APIRouter(
-    prefix="/devices",
-    tags=["Devices"]
-)
+router = APIRouter(prefix="/devices", tags=["Devices"])
+
+
+PAIRING_CODE_TTL_MINUTES = 10
 
 
 def generate_pairing_code() -> str:
-    """Generate a human-readable device pairing code."""
+    """Tạo mã ghép nối 6 chữ số."""
     digits = "".join(
         secrets.choice(string.digits)
-        for _ in range(4)
+        for _ in range(6)
     )
     return f"MMT-{digits}"
 
 
 def _generate_unique_pairing_code(db: Session) -> str:
-    """Generate a pairing code that does not already exist."""
     for _ in range(100):
         code = generate_pairing_code()
 
@@ -51,12 +47,14 @@ def _generate_unique_pairing_code(db: Session) -> str:
     )
 
 
+from sqlalchemy import or_
+
+
 def _build_device_config(
     db: Session,
     device: models.Device,
     hwid_fallback: str | None = None
 ) -> schemas.DeviceConfigResponse:
-    """Build the configuration returned to a paired device."""
 
     child = None
 
@@ -69,27 +67,33 @@ def _build_device_config(
             .first()
         )
 
-    daily_limit = (
-        child.daily_limit_minutes
-        if child else 120
-    )
-    child_name = child.name if child else "Bé An"
-
-    time_limit = db.query(models.TimeLimit).first()
-
-    bedtime = (
-        time_limit.bedtime
-        if time_limit and time_limit.bedtime
-        else "22:00"
-    )
-
-    wakeup = (
-        time_limit.wakeup_time
-        if time_limit and time_limit.wakeup_time
-        else "06:00"
+    # Chỉ lấy time limit của thiết bị này.
+    # device_id=None được xem là cấu hình dùng chung.
+    time_limit = (
+        db.query(models.TimeLimit)
+        .filter(
+            or_(
+                models.TimeLimit.device_id == device.id,
+                models.TimeLimit.device_id.is_(None)
+            )
+        )
+        .order_by(
+            models.TimeLimit.device_id.is_not(None).desc()
+        )
+        .first()
     )
 
-    rules = db.query(models.AppWebRule).all()
+    # Chỉ lấy rule riêng của thiết bị và rule dùng chung.
+    rules = (
+        db.query(models.AppWebRule)
+        .filter(
+            or_(
+                models.AppWebRule.device_id == device.id,
+                models.AppWebRule.device_id.is_(None)
+            )
+        )
+        .all()
+    )
 
     allowed_rules = [
         rule.target_value
@@ -106,17 +110,24 @@ def _build_device_config(
     return schemas.DeviceConfigResponse(
         device_hwid=device.device_hwid or hwid_fallback or "",
         device_name=device.device_name,
-        child_name=child_name,
-        daily_limit_minutes=daily_limit,
-        bedtime=bedtime,
-        wakeup_time=wakeup,
+        child_name=child.name if child else "Bé An",
+        daily_limit_minutes=(
+            child.daily_limit_minutes if child else 120
+        ),
+        bedtime=(
+            time_limit.bedtime
+            if time_limit and time_limit.bedtime
+            else "22:00"
+        ),
+        wakeup_time=(
+            time_limit.wakeup_time
+            if time_limit and time_limit.wakeup_time
+            else "06:00"
+        ),
         allowed_rules=allowed_rules,
         blocked_rules=blocked_rules,
         anti_tamper_enabled=device.anti_tamper_active,
         content_filter_enabled=device.content_filter_active,
-        admin_password_hash=hashlib.sha256(
-            "admin123".encode()
-        ).hexdigest()
     )
 
 
@@ -135,6 +146,10 @@ async def create_device_profile(
     new_device = models.Device(
         device_name=dev_data.device_name.strip(),
         pairing_code=code,
+        pairing_expires_at=(
+            datetime.utcnow()
+            + timedelta(minutes=PAIRING_CODE_TTL_MINUTES)
+        ),
         child_profile_id=dev_data.child_profile_id,
         status="PENDING_PAIR",
         is_paired=False,
@@ -143,8 +158,16 @@ async def create_device_profile(
     )
 
     db.add(new_device)
-    db.commit()
-    db.refresh(new_device)
+
+    try:
+        db.commit()
+        db.refresh(new_device)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Không thể tạo thiết bị."
+        )
 
     # Create initial blocked rules when supplied by the parent.
     if dev_data.blocked_items:
@@ -244,9 +267,14 @@ async def pair_device(
     pair_data: schemas.DevicePairRequest,
     db: Session = Depends(database.get_db)
 ):
-    """Pair an agent with a device profile using a pairing code."""
-
     code = pair_data.pairing_code.strip().upper()
+    hwid = pair_data.device_hwid.strip()
+
+    if not hwid:
+        raise HTTPException(
+            status_code=422,
+            detail="device_hwid không được để trống."
+        )
 
     device = (
         db.query(models.Device)
@@ -259,22 +287,62 @@ async def pair_device(
     if not device:
         raise HTTPException(
             status_code=404,
-            detail="Mã ghép nối không hợp lệ hoặc đã hết hạn."
+            detail="Mã ghép nối không hợp lệ."
         )
 
-    device.device_hwid = pair_data.device_hwid
+    # Không cho sử dụng lại mã đã ghép nối.
+    if device.is_paired:
+        raise HTTPException(
+            status_code=409,
+            detail="Mã ghép nối đã được sử dụng."
+        )
+
+    # Kiểm tra thời hạn.
+    if (
+        not device.pairing_expires_at
+        or device.pairing_expires_at < datetime.utcnow()
+    ):
+        raise HTTPException(
+            status_code=410,
+            detail="Mã ghép nối đã hết hạn. Hãy tạo mã mới."
+        )
+
+    # Một HWID không được gắn với hai profile.
+    existing_device = (
+        db.query(models.Device)
+        .filter(models.Device.device_hwid == hwid)
+        .first()
+    )
+
+    if existing_device and existing_device.id != device.id:
+        raise HTTPException(
+            status_code=409,
+            detail="Thiết bị này đã được đăng ký."
+        )
+
+    device.device_hwid = hwid
     device.is_paired = True
     device.status = "ONLINE_WAN"
     device.platform = pair_data.platform or "Linux"
-
-    if pair_data.ip_address:
-        device.ip_address = pair_data.ip_address
-
+    device.ip_address = pair_data.ip_address
     device.last_seen = datetime.utcnow()
-    device.pairing_token = str(uuid.uuid4())
 
-    db.commit()
-    db.refresh(device)
+    # Mã ghép nối chỉ được sử dụng một lần.
+    device.pairing_code = None
+    device.pairing_expires_at = None
+
+    # Token phiên riêng cho thiết bị.
+    device.pairing_token = secrets.token_urlsafe(32)
+
+    try:
+        db.commit()
+        db.refresh(device)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Không thể hoàn tất ghép nối."
+        )
 
     config = _build_device_config(db, device)
 
@@ -283,8 +351,7 @@ async def pair_device(
         "device_id": device.id,
         "device_name": device.device_name,
         "device_hwid": device.device_hwid,
-        "child_name": config.child_name,
-        "platform": device.platform
+        "platform": device.platform,
     })
 
     return config

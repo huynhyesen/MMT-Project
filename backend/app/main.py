@@ -86,13 +86,21 @@ except Exception:
 
 app = FastAPI(title="Parental Control Backend", version="1.3.0")
 
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_origin_regex=".*",
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Đường dẫn thư mục static UI
@@ -1226,8 +1234,11 @@ async def login_child(req: schemas.ChildLoginRequest, db: Session = Depends(data
     if not target:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ trẻ")
 
-    if target.pin and req.pin and req.pin != target.pin:
-        raise HTTPException(status_code=400, detail="Mã PIN không chính xác!")
+    if not req.pin or req.pin != target.pin:
+        raise HTTPException(
+            status_code=401,
+            detail="PIN không chính xác."
+        )
 
     profiles = db.query(models.ChildProfile).all()
     for p in profiles:

@@ -19,12 +19,21 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 2. Kích hoạt môi trường ảo nếu có
-if exist .venv\Scripts\activate.bat (
-    call .venv\Scripts\activate.bat
+:: 2. Tạo môi trường ảo nếu chưa có
+if not exist .venv (
+    echo [*] Đang tạo môi trường ảo Python (.venv)...
+    python -m venv .venv
+    if %errorlevel% neq 0 (
+        echo [LỖI] Không thể tạo môi trường ảo! Thử cài python3-venv.
+        pause
+        exit /b 1
+    )
 )
 
-:: 3. Kiểm tra và cài đặt thư viện nếu thiếu
+:: 3. Kích hoạt môi trường ảo
+call .venv\Scripts\activate.bat
+
+:: 4. Kiểm tra và cài đặt thư viện nếu thiếu
 python -c "import fastapi, uvicorn, sqlalchemy, pydantic, websockets" >nul 2>nul
 if %errorlevel% neq 0 (
     echo [*] Đang tự động kiểm tra và cài đặt thư viện cần thiết...

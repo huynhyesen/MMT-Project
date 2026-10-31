@@ -18,12 +18,21 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 2. Kích hoạt môi trường ảo nếu có
-if exist .venv\Scripts\activate.bat (
-    call .venv\Scripts\activate.bat
+:: 2. Tạo môi trường ảo nếu chưa có
+if not exist .venv (
+    echo [*] Đang tạo môi trường ảo Python (.venv)...
+    python -m venv .venv
+    if %errorlevel% neq 0 (
+        echo [LỖI] Không thể tạo môi trường ảo!
+        pause
+        exit /b 1
+    )
 )
 
-:: 3. Kiểm tra cài đặt thư viện
+:: 3. Kích hoạt môi trường ảo
+call .venv\Scripts\activate.bat
+
+:: 4. Kiểm tra cài đặt thư viện
 python -c "import websockets, psutil" >nul 2>nul
 if %errorlevel% neq 0 (
     echo [*] Đang cài đặt thư viện Agent...
@@ -31,7 +40,7 @@ if %errorlevel% neq 0 (
     echo.
 )
 
-:: 4. Tự động nhận diện Trạm Cha Mẹ trong mạng Wi-Fi
+:: 5. Tự động nhận diện Trạm Cha Mẹ trong mạng Wi-Fi
 echo [*] Đang tự động dò tìm máy tính Cha Mẹ trong mạng Wi-Fi/LAN...
 for /f "delims=" %%i in ('python -c "import sys; sys.path.insert(0, 'agent'); from lan_discovery import discover_parent_server; print(discover_parent_server(timeout=2.0) or '')"') do set pserver=%%i
 

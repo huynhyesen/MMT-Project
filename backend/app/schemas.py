@@ -138,7 +138,6 @@ class ChildProfileResponse(BaseModel):
     name: str
     avatar: str
     age: int
-    pin: str
     daily_limit_minutes: int
     is_active: bool
     created_at: Optional[datetime] = None
@@ -146,9 +145,10 @@ class ChildProfileResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ChildLoginRequest(BaseModel):
     child_id: int
-    pin: Optional[str] = None
+    pin: str
 
 # Schemas cho Cảnh báo truy cập web lạ / chưa phép & AI Content Filter
 class AlertLogCreate(BaseModel):
@@ -218,14 +218,16 @@ class DeviceConfigResponse(BaseModel):
     device_hwid: str
     device_name: str
     child_name: str
+
     daily_limit_minutes: int
     bedtime: str
     wakeup_time: str
+
     allowed_rules: List[str]
     blocked_rules: List[str]
+
     anti_tamper_enabled: bool = True
     content_filter_enabled: bool = True
-    admin_password_hash: str = "admin123"
 
 # Schemas cho AI Content Filter
 class ContentFilterAnalysisRequest(BaseModel):

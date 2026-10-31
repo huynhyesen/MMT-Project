@@ -13,22 +13,39 @@ class User(Base):
 
 class Device(Base):
     __tablename__ = "devices"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    id = Column(
+        String,
+        primary_key=True,
+        default=lambda: str(uuid.uuid4())
+    )
+
     device_name = Column(String(100), nullable=False)
-    device_hwid = Column(String(100), unique=True, index=True, nullable=True) # Mã phần cứng độc nhất
-    pairing_code = Column(String(20), unique=True, index=True, nullable=True) # Mã ghép nối (VD: MMT-8842)
-    pairing_token = Column(String(100), nullable=True) # Token xác thực phiên
-    is_paired = Column(Boolean, default=False) # Đã hoàn tất ghép nối hay chưa
-    status = Column(String(20), default='OFFLINE') # 'ONLINE_LAN', 'ONLINE_WAN', 'OFFLINE'
+    device_hwid = Column(String(100), unique=True, index=True, nullable=True)
+
+    pairing_code = Column(String(20), unique=True, index=True, nullable=True)
+    pairing_expires_at = Column(DateTime, nullable=True)
+
+    pairing_token = Column(String(100), nullable=True)
+    is_paired = Column(Boolean, default=False)
+
+    status = Column(String(20), default="OFFLINE")
     user_id = Column(String, ForeignKey("users.id"), nullable=True)
     child_profile_id = Column(Integer, ForeignKey("child_profiles.id"), nullable=True)
-    platform = Column(String(50), default="Linux") # 'Windows', 'Linux'
-    ip_address = Column(String(50), nullable=True)
-    anti_tamper_active = Column(Boolean, default=True) # Chống tắt qua Task Manager / Systemd
-    content_filter_active = Column(Boolean, default=True) # Bộ lọc AI văn bản & hình ảnh
-    last_seen = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
 
+    platform = Column(String(50), default="Linux")
+    ip_address = Column(String(50), nullable=True)
+
+    anti_tamper_active = Column(Boolean, default=True)
+    content_filter_active = Column(Boolean, default=True)
+
+    last_seen = Column(DateTime, nullable=True)
+    created_at = Column(
+        DateTime,
+        server_default=func.now(),
+        default=datetime.utcnow
+    )
+    
 class TimeLimit(Base):
     __tablename__ = "time_limits"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))

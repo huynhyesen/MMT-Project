@@ -10,6 +10,13 @@ if [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
+# Cài psutil nếu chưa có
+python3 -c "import psutil" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "[*] Đang cài đặt thư viện cần thiết..."
+    pip install psutil
+fi
+
 echo "========================================================"
 echo "      MMT PARENTAL CONTROL - GỠ TOÀN BỘ CHẶN HOSTS"
 echo "========================================================"
