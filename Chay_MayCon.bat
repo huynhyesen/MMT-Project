@@ -1,6 +1,7 @@
 @echo off
 title MMT Parental Control - Client Agent May Con
 chcp 65001 >nul
+setlocal enabledelayedexpansion
 cls
 
 echo ========================================================
@@ -42,10 +43,11 @@ if %errorlevel% neq 0 (
 
 :: 5. Tự động nhận diện Trạm Cha Mẹ trong mạng Wi-Fi
 echo [*] Đang tự động dò tìm máy tính Cha Mẹ trong mạng Wi-Fi/LAN...
+set "pserver="
 for /f "delims=" %%i in ('python -c "import sys; sys.path.insert(0, 'agent'); from lan_discovery import discover_parent_server; print(discover_parent_server(timeout=2.0) or '')"') do set pserver=%%i
 
-if not "%pserver%"=="" (
-    echo [OK] Đã tìm thấy Trạm Cha Mẹ: %pserver%
+if not "!pserver!"=="" (
+    echo [OK] Đã tìm thấy Trạm Cha Mẹ: !pserver!
 ) else (
     set pserver=http://127.0.0.1:8008
 )
@@ -55,10 +57,10 @@ if not exist agent\config.json (
     echo [*] Thiết bị chưa ghép nối với máy cha mẹ.
     set /p pcode="Nhập mã ghép nối từ Cha Mẹ (VD: MMT-8842): "
     echo [*] Đang tiến hành ghép nối thiết bị...
-    python agent\agent_main.py --pair-code %pcode% --server %pserver%
+    python agent\agent_main.py --pair-code !pcode! --server !pserver!
 ) else (
     echo [*] Đang khởi chạy Trợ lý An toàn ngầm...
-    python agent\agent_main.py --server %pserver%
+    python agent\agent_main.py --server !pserver!
 )
 
 :: Tự động dọn dẹp và gỡ bỏ toàn bộ danh sách chặn file hosts khi tắt app
