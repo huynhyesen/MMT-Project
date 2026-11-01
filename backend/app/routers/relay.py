@@ -1,9 +1,10 @@
+
 import json
 import time
-
 from typing import Any
+
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..services.realtime import manager
 
@@ -23,18 +24,37 @@ ALLOWED_ACTIONS = {
 
 class RelayCommandRequest(BaseModel):
     target_hwid: str = Field(min_length=1, max_length=100)
-    action: str = "MESSAGE"
+    action: str = Field(default="MESSAGE", min_length=1)
     data: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("target_hwid")
+    @classmethod
+    def validate_target_hwid(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("target_hwid không được để trống")
+        return value
+
+    @field_validator("action")
+    @classmethod
+    def normalize_action(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not value:
+            raise ValueError("action không được để trống")
+        return value
 
 
 @router.websocket("/ws/relay/{device_hwid}")
 async def cloud_relay_endpoint(
     websocket: WebSocket,
-    device_hwid: str
+    device_hwid: str,
 ):
-    await manager.connect(device_hwid, websocket)
+    connected = False
 
     try:
+        await manager.connect(device_hwid, websocket)
+        connected = True
+
         await manager.broadcast_json({
             "type": "DEVICE_CONNECTED_WAN",
             "device_hwid": device_hwid,
@@ -45,56 +65,60 @@ async def cloud_relay_endpoint(
 
             try:
                 message = json.loads(raw_data)
-
-                if not isinstance(message, dict):
-                    continue
-
-                message_type = message.get("type", "")
-
-                if message_type == "PING":
-                    await websocket.send_json({
-                        "type": "PONG",
-                        "timestamp": time.time(),
-                    })
-                    continue
-
-                # Không cho Agent tự giả danh một thiết bị khác.
-                message["device_hwid"] = device_hwid
-
-                # Giữ cơ chế thông báo realtime hiện tại.
-                await manager.broadcast_json(
-                    message,
-                    sender_ws=websocket
-                )
-
             except json.JSONDecodeError:
-                # Không chuyển tiếp raw text không có cấu trúc.
+                # Tương thích với các Agent cũ gửi payload dạng text thuần.
+                await manager.broadcast_text(
+                    raw_data,
+                    sender_ws=websocket,
+                )
+                continue
+
+            # Chỉ xử lý PING nếu payload là JSON object.
+            if not isinstance(message, dict):
+                await manager.broadcast_text(
+                    raw_data,
+                    sender_ws=websocket,
+                )
+                continue
+
+            message_type = str(message.get("type", "")).strip().upper()
+
+            if message_type == "PING":
                 await websocket.send_json({
-                    "type": "ERROR",
-                    "message": "Invalid JSON message",
+                    "type": "PONG",
+                    "timestamp": time.time(),
                 })
+                continue
+
+            # Không cho Agent tự giả danh một thiết bị khác.
+            message["device_hwid"] = device_hwid
+
+            await manager.broadcast_json(
+                message,
+                sender_ws=websocket,
+            )
 
     except WebSocketDisconnect:
+        # Client đóng kết nối bình thường.
         pass
-
     finally:
-        manager.disconnect(websocket)
-
-        await manager.broadcast_json({
-            "type": "DEVICE_DISCONNECTED_WAN",
-            "device_hwid": device_hwid,
-        })
+        if connected:
+            manager.disconnect(websocket)
+            await manager.broadcast_json({
+                "type": "DEVICE_DISCONNECTED_WAN",
+                "device_hwid": device_hwid,
+            })
 
 
 @router.post("/relay/command")
 async def send_relay_command(payload: RelayCommandRequest):
-    target_hwid = payload.target_hwid.strip()
-    action = payload.action.strip().upper()
+    target_hwid = payload.target_hwid
+    action = payload.action
 
     if action not in ALLOWED_ACTIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"Action không được hỗ trợ: {action}"
+            detail=f"Action không được hỗ trợ: {action}",
         )
 
     message = {
@@ -105,15 +129,13 @@ async def send_relay_command(payload: RelayCommandRequest):
         "timestamp": time.time(),
     }
 
-    sent = await manager.send_to_device(
-        target_hwid,
-        message
-    )
+    # Command phải được gửi đúng thiết bị đích, không broadcast toàn hệ thống.
+    sent = await manager.send_to_device(target_hwid, message)
 
     if not sent:
         raise HTTPException(
             status_code=404,
-            detail=f"Thiết bị {target_hwid} hiện không kết nối."
+            detail=f"Thiết bị {target_hwid} hiện không kết nối.",
         )
 
     return {
@@ -122,3 +144,4 @@ async def send_relay_command(payload: RelayCommandRequest):
         "action": action,
         "message": f"Đã gửi lệnh {action} đến {target_hwid}",
     }
+

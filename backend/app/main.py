@@ -35,18 +35,25 @@ from .services.realtime import manager
 models.Base.metadata.create_all(bind=database.engine)
 
 def auto_migrate_db():
-    """Tự động bổ sung các cột mới vào SQLite nếu chưa có."""
+    """Bổ sung các cột còn thiếu trong SQLite mà không làm mất dữ liệu."""
+    import logging
     import sqlite3
+
+    conn = sqlite3.connect(database.DB_PATH)
+
     try:
-        conn = sqlite3.connect(database.DB_PATH)
         cursor = conn.cursor()
+
+        # Migration cho bảng devices.
         cursor.execute("PRAGMA table_info(devices)")
-        cols = [row[1] for row in cursor.fetchall()]
-        if cols:
-            device_cols = {
+        existing_device_cols = {row[1] for row in cursor.fetchall()}
+
+        if existing_device_cols:
+            device_columns = {
                 "user_id": "VARCHAR(50)",
                 "device_hwid": "VARCHAR(100)",
                 "pairing_code": "VARCHAR(20)",
+                "pairing_expires_at": "DATETIME",
                 "pairing_token": "VARCHAR(100)",
                 "is_paired": "BOOLEAN DEFAULT 0",
                 "child_profile_id": "INTEGER",
@@ -55,21 +62,43 @@ def auto_migrate_db():
                 "anti_tamper_active": "BOOLEAN DEFAULT 1",
                 "content_filter_active": "BOOLEAN DEFAULT 1",
                 "last_seen": "DATETIME",
-                "created_at": "DATETIME DEFAULT CURRENT_TIMESTAMP"
+                "created_at": "DATETIME DEFAULT CURRENT_TIMESTAMP",
             }
-            for col_name, col_type in device_cols.items():
-                if col_name not in cols:
-                    cursor.execute(f"ALTER TABLE devices ADD COLUMN {col_name} {col_type}")
 
+            for column_name, column_type in device_columns.items():
+                if column_name not in existing_device_cols:
+                    cursor.execute(
+                        f"ALTER TABLE devices ADD COLUMN {column_name} {column_type}"
+                    )
+                    logging.info(
+                        "Database migration: added devices.%s",
+                        column_name,
+                    )
+
+        # Migration cho bảng alert_logs (nếu bảng đã tồn tại).
         cursor.execute("PRAGMA table_info(alert_logs)")
-        alert_cols = [row[1] for row in cursor.fetchall()]
-        if alert_cols and "category" not in alert_cols:
-            cursor.execute("ALTER TABLE alert_logs ADD COLUMN category VARCHAR(50) DEFAULT 'UNAPPROVED_ACCESS'")
+        existing_alert_cols = {row[1] for row in cursor.fetchall()}
+
+        if existing_alert_cols and "category" not in existing_alert_cols:
+            cursor.execute(
+                "ALTER TABLE alert_logs "
+                "ADD COLUMN category VARCHAR(50) "
+                "DEFAULT 'UNAPPROVED_ACCESS'"
+            )
+            logging.info("Database migration: added alert_logs.category")
 
         conn.commit()
+
+    except sqlite3.Error:
+        conn.rollback()
+        logging.exception(
+            "Database migration failed for %s",
+            database.DB_PATH,
+        )
+        raise
+
+    finally:
         conn.close()
-    except Exception:
-        pass
 
 auto_migrate_db()
 
