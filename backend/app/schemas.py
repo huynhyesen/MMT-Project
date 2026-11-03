@@ -45,7 +45,7 @@ class UsageItemResponse(BaseModel):
     remaining_formatted: str # "Còn 35 phút" hoặc "Không giới hạn" hoặc "Đã hết giờ"
     is_expired: bool # True nếu đã dùng hết giờ giới hạn
 
-class UsageStatsResponse(BaseModel):
+class UsageStatsResponse(BaseModel): #default 
     total_minutes: int
     total_formatted: str
     learning_minutes: int
@@ -93,12 +93,6 @@ class AppWebRuleResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# Schemas cho Gamification: Đổi việc tốt lấy giờ chơi
-class TaskInitial(BaseModel):
-    title: str
-    description: Optional[str] = None
-    reward_minutes: int = 15
-
 # Schemas cho Thiết lập lần đầu (Onboarding Setup)
 class OnboardingSetupRequest(BaseModel):
     learning_limit_minutes: int = 180
@@ -107,23 +101,6 @@ class OnboardingSetupRequest(BaseModel):
     wakeup_time: str = "06:00"
     allowed_sites: List[str] = ["khanacademy.org", "wikipedia.org", "duolingo.com"]
     blocked_sites: List[str] = ["youtube.com", "facebook.com", "discord.com", "tiktok.com", "roblox"]
-    initial_tasks: Optional[List[TaskInitial]] = None
-
-class TaskCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    reward_minutes: int = 15
-
-class TaskResponse(BaseModel):
-    id: int
-    title: str
-    description: Optional[str] = None
-    reward_minutes: int
-    status: str # 'TODO', 'COMPLETED_WAITING_APPROVAL', 'APPROVED'
-    created_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
 
 # Schemas cho Hồ sơ trẻ em & Đăng nhập máy
 class ChildProfileCreate(BaseModel):
@@ -205,7 +182,7 @@ class DeviceResponse(BaseModel):
     status: str
     child_profile_id: Optional[int] = None
     child_name: Optional[str] = None
-    platform: Optional[str] = "Linux"
+    platform: Optional[str] = "Linux" 
     anti_tamper_active: bool = True
     content_filter_active: bool = True
     last_seen: Optional[datetime] = None

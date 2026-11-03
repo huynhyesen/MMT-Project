@@ -65,10 +65,6 @@
                     </div>
                     <span id="nav-pending-badge" class="hidden bg-amber-500 text-slate-900 font-bold px-2 py-0.5 rounded-full text-[10px]">0</span>
                 </button>
-                <button onclick="switchParentTab('gamification')" id="nav-gamification" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition">
-                    <span class="text-base">🏆</span>
-                    <span>Đổi việc tốt lấy giờ</span>
-                </button>
                 <button onclick="switchParentTab('stats')" id="nav-stats" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition">
                     <span class="text-base">📊</span>
                     <span>Thống kê & Giới hạn</span>
@@ -132,7 +128,7 @@
             <div class="flex items-center gap-2.5">
                 <button id="btn-sound-toggle" onclick="toggleSound()" class="px-3 py-1.5 rounded-xl text-xs font-semibold border transition flex items-center gap-1.5 bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100" title="Bật/Tắt chuông Ting & Thông báo Desktop">
                     <span id="sound-icon">🔔</span>
-                    <span id="sound-text">Chuông Ting: Bật</span>
+                    <span id="sound-text">Chuông: Bật</span>
                 </button>
                 <div class="bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl text-xs flex items-center gap-2 text-slate-700">
                     <span class="text-sm">🧒</span>
@@ -272,9 +268,6 @@
                             <button onclick="switchParentTab('requests')" class="p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left font-semibold text-slate-700 hover:text-blue-700 transition">
                                 📩 Duyệt xin phép
                             </button>
-                            <button onclick="switchParentTab('gamification')" class="p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left font-semibold text-slate-700 hover:text-blue-700 transition">
-                                🏆 Giao việc tốt
-                            </button>
                             <button onclick="switchParentTab('rules')" class="p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left font-semibold text-slate-700 hover:text-blue-700 transition">
                                 🛡️ Quản lý web/app
                             </button>
@@ -379,42 +372,6 @@
             </div>
         </div>
 
-        <!-- TAB 5: VIỆC TỐT LẤY GIỜ CHƠI (GAMIFICATION) -->
-        <div id="tab-gamification" class="tab-pane hidden space-y-4">
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
-                    <div>
-                        <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
-                            <span>🏆</span> Đổi Việc Tốt Lấy Giờ Chơi (Gamification)
-                        </h2>
-                        <p class="text-xs text-slate-500">Khuyến khích con làm việc nhà, bài tập để đổi lấy thêm phút sử dụng máy tính</p>
-                    </div>
-                    <button onclick="fetchTasks()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg transition">
-                        🔄 Làm mới
-                    </button>
-                </div>
-
-                <!-- Form tạo việc tốt mới -->
-                <form onsubmit="createTask(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-2.5 mb-5 p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
-                    <input type="text" id="taskTitle" required placeholder="Tên việc (VD: Hoàn thành bài tập Toán, Dọn phòng...)" class="border border-slate-300 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-blue-500 outline-none sm:col-span-2 bg-white">
-                    <select id="taskReward" class="border border-slate-300 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-blue-500 outline-none bg-white font-semibold">
-                        <option value="15">Thưởng: +15 phút</option>
-                        <option value="20" selected>Thưởng: +20 phút</option>
-                        <option value="30">Thưởng: +30 phút</option>
-                        <option value="45">Thưởng: +45 phút</option>
-                        <option value="60">Thưởng: +60 phút</option>
-                    </select>
-                    <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2.5 rounded-xl text-xs transition shadow-xs">
-                        Tạo việc tốt ➕
-                    </button>
-                </form>
-
-                <div id="tasks-container" class="space-y-2.5 max-h-80 overflow-y-auto">
-                    <p class="text-slate-400 text-xs italic py-4 text-center">Chưa có nhiệm vụ nào. Phụ huynh hãy giao việc tốt ở form trên!</p>
-                </div>
-            </div>
-        </div>
-
         <!-- TAB 6: THỐNG KÊ THỜI GIAN SỬ DỤNG & GIỚI HẠN (STATS) -->
         <div id="tab-stats" class="tab-pane hidden space-y-4">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -431,35 +388,26 @@
                 </div>
 
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-                    <div class="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
+                    <!-- Tổng thời gian -->
+                    <div class="bg-slate-50 border border-slate-200 p-3.5 rounded-xl transition-all hover:shadow-sm">
                         <span class="text-[11px] text-slate-500 block font-medium">⏱️ Tổng đã dùng</span>
-                        <span id="stat-total-time" class="text-xl font-extrabold text-slate-800">--</span>
-                        <span class="text-[10px] text-slate-400 block mt-0.5">Dữ liệu telemetry thực</span>
+                        <span id="stat-total-time" class="text-xl font-extrabold text-slate-800">0 phút</span>
+                        <span id="stat-total-sub" class="text-[10px] text-slate-400 block mt-0.5">Dữ liệu telemetry thực tế</span>
                     </div>
-                    <div class="bg-emerald-50 border border-emerald-200 p-3.5 rounded-xl">
+                
+                    <!-- Học tập & Giáo dục -->
+                    <div class="bg-emerald-50 border border-emerald-200 p-3.5 rounded-xl transition-all hover:shadow-sm">
                         <span class="text-[11px] text-emerald-700 block font-medium">📚 Học tập & Giáo dục</span>
                         <span id="stat-learning-time" class="text-xl font-extrabold text-emerald-800">0 phút</span>
-                        <span class="text-[10px] text-emerald-600 block mt-0.5">Đã xóa sạch mục học tập</span>
+                        <span id="stat-learning-sub" class="text-[10px] text-emerald-600 block mt-0.5">Không tính vào giới hạn phạt</span>
                     </div>
-                    <div class="bg-rose-50 border border-rose-200 p-3.5 rounded-xl">
+                
+                    <!-- Giải trí & Mạng XH -->
+                    <div class="bg-rose-50 border border-rose-200 p-3.5 rounded-xl transition-all hover:shadow-sm">
                         <span class="text-[11px] text-rose-700 block font-medium">🎮 Giải trí & Mạng XH</span>
-                        <span id="stat-entertainment-time" class="text-xl font-extrabold text-rose-800">--</span>
-                        <span class="text-[10px] text-rose-600 block mt-0.5">Hạn mức quản lý</span>
+                        <span id="stat-entertainment-time" class="text-xl font-extrabold text-rose-800">0 phút</span>
+                        <span id="stat-entertainment-sub" class="text-[10px] text-rose-600 block mt-0.5">Tính vào hạn mức quản lý</span>
                     </div>
-                </div>
-
-                <!-- Auto-fill button banner -->
-                <div class="p-3.5 mb-5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div class="flex items-center gap-2.5">
-                        <span class="text-2xl">⚡</span>
-                        <div>
-                            <h4 class="text-xs font-bold text-amber-900">Thiết lập thời gian tự điền (Auto-fill):</h4>
-                            <p class="text-[11px] text-amber-700">Tự động áp dụng giới hạn chuẩn: Học tập 120p • Giải trí 45p • MXH 30p</p>
-                        </div>
-                    </div>
-                    <button onclick="autoFillLimits()" class="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs whitespace-nowrap transition flex items-center gap-1">
-                        <span>Tự điền tất cả</span> 🚀
-                    </button>
                 </div>
 
                 <!-- Lọc danh mục -->
@@ -642,17 +590,7 @@
                 </h2>
                 <p class="text-xs text-slate-500 mb-5">Các chức năng đặt lại thời gian, làm mới hộp thư yêu cầu hoặc khôi phục cài đặt gốc.</p>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-                    <div class="p-4 bg-indigo-50/60 border border-indigo-200 rounded-2xl flex flex-col justify-between gap-3">
-                        <div>
-                            <h4 class="font-bold text-indigo-900 text-xs">🌅 Bắt Đầu Ngày Mới</h4>
-                            <p class="text-[11px] text-indigo-700 mt-1">Làm mới giờ về 0 và mở lại việc tốt hàng ngày.</p>
-                        </div>
-                        <button onclick="handleReset('daily')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-2 px-3 rounded-xl transition shadow-xs">
-                            Reset ngày mới
-                        </button>
-                    </div>
-
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
                     <div class="p-4 bg-blue-50/60 border border-blue-200 rounded-2xl flex flex-col justify-between gap-3">
                         <div>
                             <h4 class="font-bold text-blue-900 text-xs">⏱️ Reset Thời Gian</h4>

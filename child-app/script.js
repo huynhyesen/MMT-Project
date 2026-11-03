@@ -137,9 +137,7 @@ let API_BASE = "http://127.0.0.1:8008";
         const tabMeta = {
             overview: { title: "Tổng Quan & Đếm Ngược", desc: "Tự giác cân đối giữa Học tập 📚 và Giải trí 🎮" },
             allowed: { title: "Web & App Được Phép", desc: "Danh sách website và ứng dụng con được phép sử dụng tự do" },
-            check: { title: "Kiểm Tra & Vào Web An Toàn", desc: "Kiểm tra độ an toàn trước khi vào trang web mới" },
             stats: { title: "Thống Kê Chi Tiết Thời Gian", desc: "Biểu đồ phân loại theo Học tập, Giải trí và Mạng xã hội" },
-            gamification: { title: "Đổi Việc Tốt Lấy Giờ Chơi", desc: "Hoàn thành nhiệm vụ tốt để tích lũy thêm giờ chơi" },
             request: { title: "Gửi Yêu Cầu Xin Phép", desc: "Xin thêm giờ sử dụng hoặc xin mở web/ứng dụng mới" },
             history: { title: "Hộp Thư & Lịch Sử", desc: "Theo dõi phản hồi và dặn dò từ cha mẹ" }
         };
@@ -235,7 +233,6 @@ let API_BASE = "http://127.0.0.1:8008";
                 fetchActiveChild();
                 fetchAllowedRules();
                 fetchUsageStats();
-                fetchTasks();
                 fetchChildRequests();
                 document.getElementById("server-offline-banner").classList.add("hidden");
             }
@@ -342,7 +339,6 @@ let API_BASE = "http://127.0.0.1:8008";
                 lastServerDailyLimit = null;
                 fetchAllowedRules();
                 fetchUsageStats();
-                fetchTasks();
                 fetchChildRequests();
             } else if (type === "USAGE_RESET" || type === "RULES_RESET" || type === "FULL_RESET" || type === "LIMIT_UPDATED") {
                 showToast("⚙️ Dữ liệu hệ thống vừa được cập nhật!", "blue");
@@ -489,7 +485,6 @@ let API_BASE = "http://127.0.0.1:8008";
 
         // --- TẢI DANH SÁCH QUY TẮC ĐƯỢC PHÉP (ALLOWED RULES) ---
         let allowedRulesCache = [];
-        let pendingStrangeTarget = "";
 
         async function fetchAllowedRules() {
             try {
@@ -653,109 +648,6 @@ let API_BASE = "http://127.0.0.1:8008";
                 window.open(webUrl, '_blank');
             }
             startActiveUsageTracking(targetValue, { category: 'Ứng dụng khác', icon: '🌐' });
-        }
-
-        // --- KIỂM TRA TRUY CẬP WEBSITE & CẢNH BÁO WEB LẠ ---
-        async function checkAndOpenUrl() {
-            const input = document.getElementById("check-url-input");
-            const rawVal = (input.value || "").trim();
-            if (!rawVal) return alert("Vui lòng nhập địa chỉ website hoặc ứng dụng con muốn vào!");
-
-            let domain = rawVal.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].split('?')[0];
-
-            // 0. AI Content Filter kiểm tra thời gian thực từ khóa & ngữ nghĩa
-            try {
-                const aiRes = await fetch(`${API_BASE}/ai/content-check`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ text_content: rawVal, url: domain })
-                });
-                if (aiRes.ok) {
-                    const aiData = await aiRes.json();
-                    if (!aiData.is_safe) {
-                        const alertEl = document.getElementById("ai-content-alert");
-                        if (alertEl) {
-                            document.getElementById("ai-alert-title").innerText = `🤖 AI FILTER: NỘI DUNG KHÔNG PHÙ HỢP ("${rawVal}")!`;
-                            document.getElementById("ai-alert-desc").innerText = aiData.reason || "Hệ thống AI vừa phát hiện nội dung có thể không phù hợp với lứa tuổi của con.";
-                            alertEl.classList.remove("hidden");
-                        }
-                        showToast(`🚨 AI Content Filter đã chặn: ${rawVal}`, "rose");
-                        fetch(`${API_BASE}/alerts/`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                target_value: rawVal,
-                                reason: `AI Filter chặn: ${aiData.reason}`,
-                                category: `AI_CONTENT_${aiData.violation_category || 'TEXT'}`,
-                                is_web: true
-                            })
-                        }).catch(() => {});
-                        return;
-                    }
-                }
-            } catch (e) {}
-
-            try {
-                // 1. Kiểm tra với Backend xem web/app có được phép không + Lấy nhãn AI
-                const res = await fetch(`${API_BASE}/check-permission/`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target: domain })
-                });
-
-                if (res.ok) {
-                    const checkResult = await res.json();
-                    const aiInfo = checkResult.classification || {};
-                    
-                    if (checkResult.allowed) {
-                        // ĐƯỢC PHÉP: Mở web và đếm giờ sử dụng!
-                        document.getElementById("strange-web-alert").classList.add("hidden");
-                        let fullUrl = rawVal.startsWith("http") ? rawVal : `https://${domain}`;
-                        window.open(fullUrl, '_blank');
-                        
-                        showToast(`✅ Được phép mở: ${domain} • AI gán nhãn: ${aiInfo.icon || '🏷️'} ${aiInfo.category || ''}`, "emerald");
-                        
-                        // BẮT ĐẦU ĐẾM GIỜ SỬ DỤNG CHO MỤC NÀY (ACTIVE USAGE TRACKER)
-                        startActiveUsageTracking(domain, aiInfo);
-                    } else {
-                        // KHÔNG ĐƯỢC PHÉP: Cảnh báo web lạ / bị chặn + Nhãn AI
-                        pendingStrangeTarget = domain;
-                        const alertBox = document.getElementById("strange-web-alert");
-                        document.getElementById("strange-alert-title").innerText = `⚠️ CẢNH BÁO: "${domain}" CHƯA ĐƯỢC PHÉP!`;
-                        document.getElementById("strange-alert-desc").innerHTML = `
-                            ${checkResult.reason || 'Trang web chưa được cha mẹ duyệt.'}<br>
-                            <span class="inline-flex items-center gap-1 mt-2 text-[11px] font-bold ${aiInfo.badge_color || ''} px-2.5 py-0.5 rounded-md border">
-                                <span>Phân loại AI:</span> <span>${aiInfo.icon || '💻'}</span> <span>${aiInfo.category || 'Chưa phân loại'}</span>
-                            </span>
-                        `;
-                        alertBox.classList.remove("hidden");
-                        showToast(`🛑 Đã chặn "${domain}"! ${checkResult.reason}`, "rose");
-
-                        // Gửi alert lên server để cha mẹ thấy tức thì
-                        fetch(`${API_BASE}/alerts/`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                target_value: domain,
-                                reason: `Trẻ cố truy cập "${domain}" (${aiInfo.category || 'Web lạ'}) nhưng bị chặn: ${checkResult.reason}`,
-                                is_web: true
-                            })
-                        }).catch(() => {});
-                    }
-                }
-            } catch (err) {
-                let fullUrl = rawVal.startsWith("http") ? rawVal : `https://${domain}`;
-                window.open(fullUrl, '_blank');
-            }
-        }
-
-        function requestStrangeWebPermission() {
-            if (!pendingStrangeTarget) return;
-            switchChildTab('request');
-            switchFormTab('unlock');
-            document.getElementById("unlock-type").value = "WEBSITE";
-            document.getElementById("unlock-target").value = pendingStrangeTarget;
-            document.getElementById("unlock-reason").value = `Con muốn vào trang "${pendingStrangeTarget}" để học tập và giải trí, mong cha mẹ duyệt cho con nhé!`;
         }
 
         // --- QUẢN LÝ HỒ SƠ CON CÁI & ĐĂNG NHẬP MÁY ---
@@ -1107,96 +999,6 @@ let API_BASE = "http://127.0.0.1:8008";
             }
         }
 
-        // --- TẢI DANH SÁCH VIỆC TỐT (GAMIFICATION) ---
-        async function fetchTasks() {
-            try {
-                const res = await fetch(`${API_BASE}/tasks/`);
-                if (!res.ok) return;
-                const tasks = await res.json();
-                const container = document.getElementById("tasks-list");
-                const navBadge = document.getElementById("nav-tasks-badge");
-
-                if (navBadge) {
-                    const activeCount = tasks.filter(t => t.status === "TODO").length;
-                    if (activeCount > 0) {
-                        navBadge.textContent = activeCount;
-                        navBadge.classList.remove("hidden");
-                    } else {
-                        navBadge.classList.add("hidden");
-                    }
-                }
-
-                if (tasks.length === 0) {
-                    container.innerHTML = `
-                        <div class="p-8 text-center text-slate-400 text-xs">
-                            <span class="text-4xl block mb-2">🌟</span>
-                            Hiện tại chưa có nhiệm vụ nào. Con hãy nhờ cha mẹ giao việc tốt ở Trạm điều khiển nhé!
-                        </div>
-                    `;
-                    return;
-                }
-
-                container.innerHTML = tasks.map(t => {
-                    let actionHtml = "";
-                    if (t.status === "TODO") {
-                        actionHtml = `
-                            <button onclick="markTaskDone(${t.id})" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1">
-                                <span>Báo đã làm xong</span> 🏆
-                            </button>
-                        `;
-                    } else if (t.status === "COMPLETED_WAITING_APPROVAL") {
-                        actionHtml = `
-                            <span class="px-3 py-1 bg-amber-100 text-amber-800 rounded-xl text-xs font-semibold">
-                                Đang chờ cha mẹ duyệt ⏳
-                            </span>
-                        `;
-                    } else if (t.status === "APPROVED") {
-                        actionHtml = `
-                            <span class="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold">
-                                Đã nhận +${t.reward_minutes} phút 🎉
-                            </span>
-                        `;
-                    }
-
-                    return `
-                        <div class="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:bg-slate-100/70 transition">
-                            <div class="flex items-center gap-3">
-                                <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-lg font-bold">
-                                    +${t.reward_minutes}p
-                                </div>
-                                <div>
-                                    <div class="font-bold text-xs text-slate-800">${t.title}</div>
-                                    <div class="text-[11px] text-slate-400 mt-0.5">${t.description || "Làm tốt để nhận thêm giờ chơi!"}</div>
-                                </div>
-                            </div>
-                            <div>
-                                ${actionHtml}
-                            </div>
-                        </div>
-                    `;
-                }).join("");
-
-            } catch (err) {
-                console.error("Lỗi nạp tasks:", err);
-            }
-        }
-
-        async function markTaskDone(taskId) {
-            try {
-                const res = await fetch(`${API_BASE}/tasks/${taskId}/complete`, {
-                    method: "PATCH"
-                });
-                if (res.ok) {
-                    showToast("🎉 Giỏi lắm! Đã báo hoàn thành việc tốt cho Cha Mẹ.", "amber");
-                    fetchTasks();
-                } else {
-                    alert("Không thể cập nhật việc tốt.");
-                }
-            } catch (err) {
-                alert("Lỗi kết nối máy chủ!");
-            }
-        }
-
         // --- TẢI LỊCH SỬ YÊU CẦU & PHẢN HỒI ---
         async function fetchChildRequests() {
             try {
@@ -1264,7 +1066,6 @@ let API_BASE = "http://127.0.0.1:8008";
             fetchActiveChild();
             fetchAllowedRules();
             fetchUsageStats();
-            fetchTasks();
             fetchChildRequests();
 
             // Định kỳ cập nhật dữ liệu ngầm mỗi 10 giây

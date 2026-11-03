@@ -88,6 +88,7 @@ def mock_relay_manager(monkeypatch):
     broadcast_json = AsyncMock()
     broadcast_text = AsyncMock()
     disconnect = MagicMock()
+    send_to_device = AsyncMock(return_value=True)
 
     monkeypatch.setattr(
         relay.manager, "connect", connect
@@ -101,12 +102,16 @@ def mock_relay_manager(monkeypatch):
     monkeypatch.setattr(
         relay.manager, "disconnect", disconnect
     )
+    monkeypatch.setattr(
+        relay.manager, "send_to_device", send_to_device
+    )
 
     return {
         "connect": connect,
         "broadcast_json": broadcast_json,
         "broadcast_text": broadcast_text,
         "disconnect": disconnect,
+        "send_to_device": send_to_device,
     }
 
 
@@ -259,13 +264,14 @@ def test_send_relay_command(
     assert result["status"] == "success"
     assert "device-001" in result["message"]
 
-    mock_relay_manager["broadcast_json"].assert_awaited_once()
+    mock_relay_manager["send_to_device"].assert_awaited_once()
 
-    sent_message = (
-        mock_relay_manager["broadcast_json"]
-        .await_args.args[0]
+    target_hwid, sent_message = (
+        mock_relay_manager["send_to_device"]
+        .await_args.args
     )
 
+    assert target_hwid == "device-001"
     assert sent_message["type"] == "MESSAGE"
     assert sent_message["target_hwid"] == "device-001"
     assert sent_message["sender"] == "parent_cloud"
@@ -284,11 +290,12 @@ def test_send_relay_command_default_action(
 
     assert response.status_code == 200
 
-    sent_message = (
-        mock_relay_manager["broadcast_json"]
-        .await_args.args[0]
+    target_hwid, sent_message = (
+        mock_relay_manager["send_to_device"]
+        .await_args.args
     )
 
+    assert target_hwid == "device-001"
     assert sent_message["type"] == "MESSAGE"
     assert sent_message["data"] == {}
 
@@ -373,17 +380,17 @@ def test_relay_websocket_broadcast_message(
             }
         })
 
-        assert (
-            mock_relay_manager["broadcast_json"].await_count
-            == 2
-        )
+    assert (
+        mock_relay_manager["broadcast_json"].await_count
+        == 3
+    )
 
-        forwarded_message = (
-            mock_relay_manager["broadcast_json"]
-            .await_args.args[0]
-        )
+    forwarded_message = (
+        mock_relay_manager["broadcast_json"]
+        .await_args_list[1].args[0]
+    )
 
-        assert forwarded_message["type"] == "TELEMETRY"
+    assert forwarded_message["type"] == "TELEMETRY"
 
 
 # ============================================================
@@ -397,17 +404,16 @@ def test_relay_websocket_raw_text(
     with client.websocket_connect(
         "/ws/relay/device-001"
     ) as websocket:
-
         websocket.send_text("raw-message")
 
-        mock_relay_manager[
+    mock_relay_manager[
+        "broadcast_text"
+    ].assert_awaited_once_with(
+        "raw-message",
+        sender_ws=mock_relay_manager[
             "broadcast_text"
-        ].assert_awaited_once_with(
-            "raw-message",
-            sender_ws=mock_relay_manager[
-                "broadcast_text"
-            ].await_args.kwargs["sender_ws"]
-        )
+        ].await_args.kwargs["sender_ws"]
+    )
 
 
 # ============================================================

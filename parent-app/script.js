@@ -121,7 +121,6 @@ let API_BASE = "http://127.0.0.1:8008";
             'children': { title: '👨‍👩‍👧‍👦 Hồ Sơ Con Cái', desc: 'Tạo tài khoản riêng cho từng bé, cài mã PIN và chuyển đổi tài khoản sử dụng' },
             'control': { title: '⚡ Điều Khiển Khẩn Cấp', desc: 'Khóa / Mở máy tính từ xa và gửi lời nhắn trực tiếp tức thì' },
             'requests': { title: '📩 Yêu Cầu Xin Phép', desc: 'Phê duyệt hoặc từ chối khi con xin phép mở Web / Ứng dụng mới hoặc xin thêm giờ' },
-            'gamification': { title: '🏆 Đổi Việc Tốt Lấy Giờ Chơi', desc: 'Giao bài tập hoặc việc nhà để thưởng thêm thời gian cho con' },
             'stats': { title: '📊 Thống Kê & Giới Hạn', desc: 'Thống kê các app/web thực sự sử dụng với nhãn AI và tự điền giới hạn' },
             'rules': { title: '🛡️ Quản Lý Quy Tắc Web / App', desc: 'Danh sách các trang web / phần mềm đang được Cho phép hoặc Chặn' },
             'curfew': { title: '🌙 Khung Giờ Giới Nghiêm', desc: 'Tự động vô hiệu hóa máy ban đêm và mở lại vào sáng hôm sau' },
@@ -187,7 +186,6 @@ let API_BASE = "http://127.0.0.1:8008";
             }
             initWebSocket();
             fetchRequests();
-            fetchTasks();
             fetchUsageStats();
             fetchRules();
             fetchChildren();
@@ -256,11 +254,6 @@ let API_BASE = "http://127.0.0.1:8008";
                         } else if (data.type === "RULES_UPDATED") {
                             fetchRules();
                             fetchUsageStats();
-                        } else if (data.type === "TASK_WAITING_APPROVAL") {
-                            playNotificationSound('ting');
-                            showDesktopNotification("🏆 Bé hoàn thành việc tốt!", `Bé đã làm xong: "${data.title}" (+${data.reward_minutes} phút)`);
-                            showToast(`🏆 Bé đã hoàn thành: "${data.title}"! Hãy duyệt để thưởng +${data.reward_minutes} phút cho con.`, "success");
-                            fetchTasks();
                         } else if (data.type === "REQUEST_DECIDED") {
                             fetchRequests();
                             fetchRules();
@@ -268,7 +261,6 @@ let API_BASE = "http://127.0.0.1:8008";
                         } else if (data.type === "USAGE_RESET" || data.type === "DAILY_RESET_TRIGGERED") {
                             fetchUsageStats();
                             fetchRules();
-                            fetchTasks();
                         }
                     } catch (e) {
                         console.log("Raw WS message:", event.data);
@@ -484,103 +476,6 @@ let API_BASE = "http://127.0.0.1:8008";
             }
         }
 
-        async function fetchTasks() {
-            const container = document.getElementById("tasks-container");
-            try {
-                const res = await fetch(`${API_BASE}/tasks/`);
-                const tasks = await res.json();
-                container.innerHTML = "";
-
-                if (tasks.length === 0) {
-                    container.innerHTML = `<p class="text-slate-400 text-xs italic py-4 text-center">Chưa có nhiệm vụ nào được tạo. Hãy tạo việc tốt cho con bằng form phía trên!</p>`;
-                    return;
-                }
-
-                tasks.forEach(t => {
-                    const row = document.createElement("div");
-                    row.className = "p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3 text-xs";
-                    
-                    let statusBadge = "";
-                    let actionBtn = "";
-                    if (t.status === "TODO") {
-                        statusBadge = `<span class="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-semibold text-[10px]">⏳ Chờ con làm</span>`;
-                    } else if (t.status === "COMPLETED_WAITING_APPROVAL") {
-                        statusBadge = `<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px] animate-pulse">🟡 Đã xong (Chờ duyệt)</span>`;
-                        actionBtn = `<button onclick="approveTask(${t.id})" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs shadow-sm transition">✅ Duyệt & Thưởng +${t.reward_minutes}p</button>`;
-                    } else {
-                        statusBadge = `<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">🟢 Đã thưởng +${t.reward_minutes}p</span>`;
-                    }
-
-                    row.innerHTML = `
-                        <div class="flex items-center gap-2.5">
-                            <span class="text-base">🏆</span>
-                            <div>
-                                <h4 class="font-bold text-slate-800">${t.title}</h4>
-                                <p class="text-[11px] text-slate-500">${t.description || 'Nhiệm vụ rèn luyện'} • Thưởng: <strong>+${t.reward_minutes} phút</strong></p>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            ${statusBadge}
-                            ${actionBtn}
-                            <button onclick="deleteTask(${t.id})" class="text-slate-400 hover:text-rose-600 text-xs font-semibold ml-1">&times;</button>
-                        </div>
-                    `;
-                    container.appendChild(row);
-                });
-            } catch (e) {
-                container.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center">Lỗi tải nhiệm vụ: ${e.message}</p>`;
-            }
-        }
-
-        async function createTask(e) {
-            e.preventDefault();
-            const title = document.getElementById("taskTitle").value.trim();
-            const reward = parseInt(document.getElementById("taskReward").value, 10);
-            if (!title) return;
-
-            try {
-                const res = await fetch(`${API_BASE}/tasks/`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ title: title, reward_minutes: reward })
-                });
-                if (res.ok) {
-                    showToast(`Đã tạo việc tốt "${title}" (+${reward}p) thành công!`, "success");
-                    document.getElementById("taskTitle").value = "";
-                    fetchTasks();
-                }
-            } catch (err) {
-                alert("Lỗi tạo nhiệm vụ: " + err.message);
-            }
-        }
-
-        async function approveTask(id) {
-            try {
-                const res = await fetch(`${API_BASE}/tasks/${id}/approve`, { method: "PATCH" });
-                if (res.ok) {
-                    showToast("Đã duyệt và cộng thêm phút sử dụng cho con!", "success");
-                    fetchTasks();
-                    fetchRules();
-                    fetchUsageStats();
-                }
-            } catch (err) {
-                alert("Lỗi duyệt nhiệm vụ: " + err.message);
-            }
-        }
-
-        async function deleteTask(id) {
-            if (!confirm("Bạn có chắc muốn xóa nhiệm vụ này?")) return;
-            try {
-                const res = await fetch(`${API_BASE}/tasks/${id}`, { method: "DELETE" });
-                if (res.ok) {
-                    showToast("Đã xóa nhiệm vụ!", "info");
-                    fetchTasks();
-                }
-            } catch (err) {
-                alert("Lỗi xóa nhiệm vụ: " + err.message);
-            }
-        }
-
         let parentChart = null;
 
         function updateParentChart(learnM, entM, socM) {
@@ -737,21 +632,6 @@ let API_BASE = "http://127.0.0.1:8008";
                 `;
                 listEl.appendChild(row);
             });
-        }
-
-        async function autoFillLimits() {
-            if (!confirm("Tự động điền hạn mức khuyên dùng cho các web và app (Học tập: 120p, Giải trí: 45p, MXH: 30p)?")) return;
-            try {
-                const res = await fetch(`${API_BASE}/rules/auto-fill-defaults`, { method: "POST" });
-                if (res.ok) {
-                    const data = await res.json();
-                    showToast(`⚡ Đã tự điền hạn mức khuyên dùng thành công (${data.count} mục)!`, "success");
-                    fetchUsageStats();
-                    fetchRules();
-                }
-            } catch (e) {
-                alert("Lỗi tự điền hạn mức: " + e.message);
-            }
         }
 
         async function setQuickLimit(targetName, mins) {
@@ -1400,10 +1280,7 @@ let API_BASE = "http://127.0.0.1:8008";
             let confirmMsg = "";
             let endpoint = "";
 
-            if (type === "daily") {
-                confirmMsg = "Bắt đầu ngày mới? Thời gian đã dùng sẽ về 0 và danh sách việc tốt hàng ngày sẽ được mở lại.";
-                endpoint = "/reset/daily";
-            } else if (type === "usage") {
+            if (type === "usage") {
                 confirmMsg = "Bạn có chắc muốn đặt lại toàn bộ thời gian sử dụng hôm nay về 0?";
                 endpoint = "/reset/usage";
             } else if (type === "rules") {
@@ -1427,7 +1304,6 @@ let API_BASE = "http://127.0.0.1:8008";
                     fetchUsageStats();
                     fetchRules();
                     fetchRequests();
-                    fetchTasks();
                 }
             } catch (err) {
                 alert("Lỗi kết nối máy chủ: " + err.message);
@@ -1439,7 +1315,6 @@ let API_BASE = "http://127.0.0.1:8008";
             await autoDetectBackendPort();
             initWebSocket();
             fetchRequests();
-            fetchTasks();
             fetchUsageStats();
             fetchRules();
             fetchCurfew();

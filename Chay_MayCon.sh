@@ -120,4 +120,4 @@ if [ ! -f "agent/config.json" ]; then
     echo ""
     echo "[*] Thiết bị chưa ghép nối với máy Cha Mẹ."
     while true; do
-        read -r -p "Nhập mã ghép nối từ Cha Mẹ (VD: MMT-8842): " pcode
+        read -r -p "Nhập mã ghép nối từ Cha Mẹ: " pcode

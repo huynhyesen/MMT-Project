@@ -88,15 +88,6 @@ class ChildRequest(Base):
 
 TimeRequest = ChildRequest
 
-class Task(Base):
-    __tablename__ = "tasks"
-    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
-    title = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
-    reward_minutes = Column(Integer, default=15) # Số phút thưởng khi hoàn thành
-    status = Column(String(30), default="TODO") # 'TODO', 'COMPLETED_WAITING_APPROVAL', 'APPROVED'
-    created_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
-
 class ChildProfile(Base):
     """Hồ sơ cá nhân của trẻ để đăng nhập và áp dụng cài đặt riêng"""
     __tablename__ = "child_profiles"

@@ -103,7 +103,7 @@ if not exist "agent\config.json" (
     echo [*] Thiết bị chưa ghép nối với máy Cha Mẹ.
     :ask_pair_code
     set "pcode="
-    set /p "pcode=Nhập mã ghép nối từ Cha Mẹ (VD: MMT-8842): "
+    set /p "pcode=Nhập mã ghép nối từ Cha Mẹ: "
     if "!pcode!"=="" (
         echo [!] Mã ghép nối không được để trống!
         goto ask_pair_code

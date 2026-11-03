@@ -123,14 +123,6 @@ def show_kiosk_lock(
                 except Exception as ex:
                     messagebox.showerror("Lỗi gửi yêu cầu", f"Không thể gửi tới Cha Mẹ: {ex}", parent=root)
 
-            # Nút đổi việc tốt
-            def _open_child_tasks():
-                try:
-                    webbrowser.open(f"{_backend_url}/child")
-                    status_var.set("🌐 Đang mở Góc Của Con...")
-                except Exception:
-                    pass
-
             # Nút mở khóa khẩn cấp dành cho Cha Mẹ
             def _parent_unlock():
                 pwd = simpledialog.askstring("Xác thực Cha Mẹ", "Nhập mật khẩu Quản trị viên của Cha Mẹ:", show="*", parent=root)
@@ -147,9 +139,6 @@ def show_kiosk_lock(
             if not is_bedtime:
                 req_btn = tk.Button(btn_frame, text="🚀 Xin Cha Mẹ Thêm 15 Phút", font=("Arial", 11, "bold"), bg="#2563eb", fg="white", padx=15, pady=8, bd=0, cursor="hand2", command=_request_time)
                 req_btn.pack(side="left", padx=6)
-
-            task_btn = tk.Button(btn_frame, text="🏆 Đổi Việc Tốt Lấy Giờ", font=("Arial", 11, "bold"), bg="#f59e0b", fg="white", padx=15, pady=8, bd=0, cursor="hand2", command=_open_child_tasks)
-            task_btn.pack(side="left", padx=6)
 
             admin_btn = tk.Button(card, text="🔑 Mở khóa khẩn cấp", font=("Arial", 9), bg="#334155", fg="#cbd5e1", bd=0, padx=10, pady=5, cursor="hand2", command=_parent_unlock)
             admin_btn.pack(pady=(15, 0))

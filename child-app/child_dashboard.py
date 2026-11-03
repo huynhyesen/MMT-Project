@@ -42,10 +42,9 @@ def open_url(target):
 # CÁC HÀM XỬ LÝ DỮ LIỆU
 # ==========================================
 def refresh_all():
-    """Tải lại toàn bộ dữ liệu: thời gian, web được phép, việc tốt."""
+    """Tải lại toàn bộ dữ liệu: thời gian, web được phép."""
     load_usage_stats()
     load_allowed_rules()
-    load_tasks()
 
 def load_usage_stats():
     data, err = send_api("/usage-stats/")
@@ -91,42 +90,6 @@ def open_selected_web():
         return
     val = rules_tree.item(selected[0])["values"][0]
     open_url(val)
-
-def load_tasks():
-    for item in tasks_tree.get_children():
-        tasks_tree.delete(item)
-
-    data, err = send_api("/tasks/")
-    if err or not data:
-        return
-
-    for t in data:
-        status_str = "Chưa làm"
-        if t.get("status") == "COMPLETED_WAITING_APPROVAL":
-            status_str = "⏳ Chờ cha mẹ duyệt"
-        elif t.get("status") == "APPROVED":
-            status_str = "🎉 Đã nhận thưởng"
-
-        tasks_tree.insert("", "end", values=(
-            t.get("id"),
-            t.get("title", ""),
-            f"+{t.get('reward_minutes', 0)} phút",
-            status_str
-        ))
-
-def complete_selected_task():
-    selected = tasks_tree.selection()
-    if not selected:
-        messagebox.showwarning("Chưa chọn", "Vui lòng chọn việc tốt bạn đã làm xong!")
-        return
-
-    task_id = tasks_tree.item(selected[0])["values"][0]
-    res, err = send_api(f"/tasks/{task_id}/complete", method="PATCH")
-    if err:
-        messagebox.showerror("Lỗi", f"Không thể gửi báo cáo: {err}")
-    else:
-        messagebox.showinfo("Thành công", "🎉 Giỏi lắm! Đã gửi thông báo cho Cha Mẹ để nhận thưởng thêm giờ!")
-        load_tasks()
 
 def submit_time_request():
     minutes = time_var.get()
@@ -216,35 +179,12 @@ rules_btn_frame.pack(fill="x")
 tk.Button(rules_btn_frame, text="↗ Mở Trang Web Trong Trình Duyệt", bg="#2563eb", fg="white", font=("Segoe UI", 9, "bold"), command=open_selected_web).pack(side="left", padx=(0, 5), expand=True, fill="x")
 tk.Button(rules_btn_frame, text="🔄 Làm mới", bg="#64748b", fg="white", font=("Segoe UI", 9, "bold"), command=refresh_all).pack(side="left", padx=5)
 
-# TAB 2: ĐỔI VIỆC TỐT LẤY GIỜ CHƠI (GAMIFICATION)
+# TAB 2: XIN PHÉP CHA MẸ
 tab2 = ttk.Frame(notebook, padding=10)
-notebook.add(tab2, text="🏆 Việc Tốt Nhận Thưởng")
-
-tk.Label(tab2, text="Làm việc nhà hoặc bài tập để nhận thêm giờ dùng máy tính:", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 5))
-
-tasks_columns = ("ID", "Việc tốt", "Thưởng", "Trạng thái")
-tasks_tree = ttk.Treeview(tab2, columns=tasks_columns, show="headings", height=10)
-tasks_tree.heading("ID", text="ID")
-tasks_tree.heading("Việc tốt", text="Việc tốt / Bài tập")
-tasks_tree.heading("Thưởng", text="Thưởng")
-tasks_tree.heading("Trạng thái", text="Trạng thái")
-tasks_tree.column("ID", width=35, anchor="center")
-tasks_tree.column("Việc tốt", width=280)
-tasks_tree.column("Thưởng", width=90, anchor="center")
-tasks_tree.column("Trạng thái", width=140, anchor="center")
-tasks_tree.pack(fill="both", expand=True, pady=(0, 8))
-
-tasks_btn_frame = tk.Frame(tab2)
-tasks_btn_frame.pack(fill="x")
-tk.Button(tasks_btn_frame, text="🏆 Báo Đã Làm Xong", bg="#d97706", fg="white", font=("Segoe UI", 9, "bold"), command=complete_selected_task).pack(side="left", padx=(0, 5), expand=True, fill="x")
-tk.Button(tasks_btn_frame, text="🔄 Cập nhật", bg="#64748b", fg="white", font=("Segoe UI", 9, "bold"), command=load_tasks).pack(side="left", padx=5)
-
-# TAB 3: XIN PHÉP CHA MẸ
-tab3 = ttk.Frame(notebook, padding=10)
-notebook.add(tab3, text="📩 Xin Phép Cha Mẹ")
+notebook.add(tab2, text="📩 Xin Phép Cha Mẹ")
 
 # Xin thêm giờ
-frame_time = tk.LabelFrame(tab3, text=" ⏳ Xin thêm thời gian ", font=("Segoe UI", 10, "bold"), padx=10, pady=8, fg="#2563eb")
+frame_time = tk.LabelFrame(tab2, text=" ⏳ Xin thêm thời gian ", font=("Segoe UI", 10, "bold"), padx=10, pady=8, fg="#2563eb")
 frame_time.pack(fill="x", pady=(0, 10))
 
 time_var = tk.IntVar(value=15)
@@ -260,7 +200,7 @@ time_reason_text.pack(fill="x", pady=(2, 6))
 tk.Button(frame_time, text="Gửi yêu cầu xin giờ ⏱️", bg="#2563eb", fg="white", font=("Segoe UI", 9, "bold"), command=submit_time_request).pack(fill="x", ipady=2)
 
 # Xin mở Web/App
-frame_unlock = tk.LabelFrame(tab3, text=" 🔓 Xin mở khóa Website / Ứng dụng ", font=("Segoe UI", 10, "bold"), padx=10, pady=8, fg="#059669")
+frame_unlock = tk.LabelFrame(tab2, text=" 🔓 Xin mở khóa Website / Ứng dụng ", font=("Segoe UI", 10, "bold"), padx=10, pady=8, fg="#059669")
 frame_unlock.pack(fill="x")
 
 tk.Label(frame_unlock, text="Loại mục:", font=("Segoe UI", 8)).pack(anchor="w")

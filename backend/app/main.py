@@ -132,6 +132,15 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(("/parent", "/child")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # Đường dẫn thư mục static UI
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PARENT_APP_DIR = os.path.join(BASE_DIR, "parent-app")
@@ -146,7 +155,7 @@ if os.path.exists(CHILD_APP_DIR):
 current_day_str = datetime.now().strftime("%Y-%m-%d")
 
 def check_and_perform_daily_reset(db: Session):
-    """Tự động kiểm tra chuyển ngày: nếu bước sang ngày mới, tự động reset thời gian và danh sách việc tốt."""
+    """Tự động kiểm tra chuyển ngày: nếu bước sang ngày mới, tự động reset thời gian."""
     global current_day_str
     today_str = datetime.now().strftime("%Y-%m-%d")
     if today_str != current_day_str:
@@ -154,9 +163,6 @@ def check_and_perform_daily_reset(db: Session):
         # Đặt lại thời gian sử dụng về 0
         for rule in db.query(models.AppWebRule).all():
             rule.used_minutes = 0
-        # Đặt lại trạng thái việc tốt về TODO để con làm lại vào ngày mới
-        for task in db.query(models.Task).all():
-            task.status = "TODO"
         # Xóa nhật ký telemetry cũ của ngày hôm trước
         db.query(models.MinimalTelemetryLog).delete()
         db.commit()
@@ -200,7 +206,7 @@ def read_root(request: Request):
                             <span class="text-xl">🚀</span>
                             <div class="text-left">
                                 <div>Góc Học Tập & Giải Trí Của Con</div>
-                                <div class="text-[11px] text-emerald-200 font-normal">Xem đếm ngược, web mở & việc tốt</div>
+                                <div class="text-[11px] text-emerald-200 font-normal">Xem đếm ngược, web mở & xin thêm giờ</div>
                             </div>
                         </div>
                         <span class="group-hover:translate-x-1 transition">➔</span>
@@ -354,20 +360,13 @@ def get_onboarding_config(db: Session = Depends(database.get_db)):
     allowed = [r.target_value for r in rules if r.action == "ALLOW"]
     blocked = [r.target_value for r in rules if r.action == "BLOCK"]
 
-    tasks = db.query(models.Task).all()
-    initial_tasks = [
-        {"title": t.title, "description": t.description, "reward_minutes": t.reward_minutes}
-        for t in tasks
-    ]
-
     return {
         "learning_limit_minutes": learn_limit.daily_limit_minutes if learn_limit else 180,
         "entertainment_limit_minutes": ent_limit.daily_limit_minutes if ent_limit else 45,
         "bedtime": learn_limit.bedtime if learn_limit else "22:00",
         "wakeup_time": learn_limit.wakeup_time if learn_limit and learn_limit.wakeup_time else "06:00",
         "allowed_sites": allowed or [],
-        "blocked_sites": blocked or ["youtube.com", "facebook.com", "discord.com", "tiktok.com"],
-        "initial_tasks": initial_tasks or []
+        "blocked_sites": blocked or ["youtube.com", "facebook.com", "discord.com", "tiktok.com"]
     }
 
 @app.post("/onboarding/setup")
@@ -416,18 +415,6 @@ async def save_onboarding_setup(config: schemas.OnboardingSetupRequest, db: Sess
             r_type = "WEBSITE" if "." in clean else "APP"
             db.add(models.AppWebRule(rule_type=r_type, target_value=clean, action="BLOCK", time_limit_minutes=config.entertainment_limit_minutes, used_minutes=0))
 
-    # Cập nhật danh sách việc tốt ban đầu (initial_tasks) nếu có
-    if config.initial_tasks is not None and len(config.initial_tasks) > 0:
-        db.query(models.Task).delete()
-        for t in config.initial_tasks:
-            if t.title and t.title.strip():
-                db.add(models.Task(
-                    title=t.title.strip(),
-                    description=t.description or "Nhiệm vụ hàng ngày",
-                    reward_minutes=t.reward_minutes or 15,
-                    status="TODO"
-                ))
-
     db.commit()
 
     await manager.broadcast_json({
@@ -436,88 +423,6 @@ async def save_onboarding_setup(config: schemas.OnboardingSetupRequest, db: Sess
     })
 
     return {"status": "success", "message": "Đã lưu cấu hình gốc thành công!"}
-
-# ==========================================
-# 2. GAMIFICATION: ĐỔI VIỆC TỐT LẤY GIỜ CHƠI
-# ==========================================
-@app.get("/tasks/", response_model=List[schemas.TaskResponse])
-def get_tasks(db: Session = Depends(database.get_db)):
-    """Lấy danh sách việc tốt / bài tập nhận thưởng. Mặc định trống, phụ huynh tự thêm."""
-    return db.query(models.Task).order_by(models.Task.id.desc()).all()
-
-@app.post("/tasks/", status_code=201, response_model=schemas.TaskResponse)
-async def create_task(task_data: schemas.TaskCreate, db: Session = Depends(database.get_db)):
-    """Phụ huynh tạo việc tốt / bài tập mới."""
-    new_task = models.Task(
-        title=task_data.title.strip(),
-        description=task_data.description,
-        reward_minutes=task_data.reward_minutes,
-        status="TODO"
-    )
-    db.add(new_task)
-    db.commit()
-    db.refresh(new_task)
-
-    await manager.broadcast_json({
-        "type": "NEW_TASK",
-        "title": new_task.title,
-        "reward_minutes": new_task.reward_minutes
-    })
-    return new_task
-
-@app.patch("/tasks/{task_id}/complete", response_model=schemas.TaskResponse)
-async def complete_task(task_id: int, db: Session = Depends(database.get_db)):
-    """Trẻ em báo cáo đã hoàn thành việc tốt."""
-    task = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Không tìm thấy việc tốt")
-    
-    task.status = "COMPLETED_WAITING_APPROVAL"
-    db.commit()
-    db.refresh(task)
-
-    await manager.broadcast_json({
-        "type": "TASK_WAITING_APPROVAL",
-        "task_id": task.id,
-        "title": task.title,
-        "reward_minutes": task.reward_minutes
-    })
-    return task
-
-@app.patch("/tasks/{task_id}/approve", response_model=schemas.TaskResponse)
-async def approve_task(task_id: int, db: Session = Depends(database.get_db)):
-    """Phụ huynh duyệt và thưởng thêm phút sử dụng cho con."""
-    task = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Không tìm thấy việc tốt")
-    
-    task.status = "APPROVED"
-    
-    # Tự động cộng thưởng số phút vào quy tắc hoặc giảm used_minutes
-    for rule in db.query(models.AppWebRule).filter(models.AppWebRule.action == "ALLOW").all():
-        rule.time_limit_minutes = (rule.time_limit_minutes or 60) + task.reward_minutes
-
-    db.commit()
-    db.refresh(task)
-
-    await manager.broadcast_json({
-        "type": "TASK_APPROVED_REWARD",
-        "task_id": task.id,
-        "title": task.title,
-        "reward_minutes": task.reward_minutes,
-        "message": f"🎉 Chúc mừng con! Cha mẹ đã duyệt '{task.title}' và thưởng thêm +{task.reward_minutes} phút!"
-    })
-    return task
-
-@app.delete("/tasks/{task_id}")
-def delete_task(task_id: int, db: Session = Depends(database.get_db)):
-    """Xóa một nhiệm vụ / việc tốt."""
-    task = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Không tìm thấy việc tốt")
-    db.delete(task)
-    db.commit()
-    return {"status": "success", "message": "Đã xóa việc tốt thành công"}
 
 # ==========================================
 # 3. QUẢN LÝ THIẾT BỊ VÀ TELEMETRY (NT2)
@@ -919,6 +824,7 @@ def delete_rule(rule_id: str, db: Session = Depends(database.get_db)):
 # ==========================================
 # 6. CÁC TÍNH NĂNG RESET DÀNH CHO PHỤ HUYNH
 # ==========================================
+@app.post("/reset/daily", include_in_schema=False)
 @app.post("/reset/usage")
 async def reset_usage_time(db: Session = Depends(database.get_db)):
     """Reset toàn bộ thời gian sử dụng hôm nay về 0."""
@@ -963,22 +869,6 @@ async def reset_requests(db: Session = Depends(database.get_db)):
         "message": "Hộp thư yêu cầu đã được làm sạch."
     })
     return {"status": "success", "message": "Đã làm sạch lịch sử yêu cầu."}
-
-@app.post("/reset/daily")
-async def trigger_daily_reset(db: Session = Depends(database.get_db)):
-    """Tự động hoặc chủ động kích hoạt reset sang ngày mới: thời gian về 0, việc tốt về TODO."""
-    for rule in db.query(models.AppWebRule).all():
-        rule.used_minutes = 0
-    for task in db.query(models.Task).all():
-        task.status = "TODO"
-    db.query(models.MinimalTelemetryLog).delete()
-    db.commit()
-
-    await manager.broadcast_json({
-        "type": "DAILY_RESET_TRIGGERED",
-        "message": "🌅 Đã thực hiện reset ngày mới: Thời gian sử dụng về 0 và danh sách việc tốt đã được làm mới!"
-    })
-    return {"status": "success", "message": "Đã reset toàn bộ cho ngày mới!"}
 
 @app.post("/reset/all")
 async def reset_all_system(db: Session = Depends(database.get_db)):
@@ -1345,19 +1235,3 @@ def clear_all_alerts(db: Session = Depends(database.get_db)):
     db.commit()
     return {"message": "Đã xóa sạch tất cả cảnh báo"}
 
-# ==========================================
-# TỰ ĐỘNG ĐIỀN HẠN MỨC KHUYÊN DÙNG (AUTO-FILL)
-# ==========================================
-@app.post("/rules/auto-fill-defaults")
-async def auto_fill_default_limits(db: Session = Depends(database.get_db)):
-    """Tự động điền hạn mức khuyên dùng cho các web và app."""
-    rules = db.query(models.AppWebRule).all()
-    updated_count = 0
-    for r in rules:
-        info = classify_item(r.target_value)
-        r.time_limit_minutes = info["default_limit"]
-        updated_count += 1
-    db.commit()
-
-    await manager.broadcast_json({"type": "RULES_UPDATED"})
-    return {"message": f"Đã tự động điền hạn mức khuyên dùng cho {updated_count} mục!", "count": updated_count}
