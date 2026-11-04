@@ -111,7 +111,7 @@ def _build_device_config(
     return schemas.DeviceConfigResponse(
         device_hwid=device.device_hwid or hwid_fallback or "",
         device_name=device.device_name,
-        child_name=child.name if child else "Bé An",
+        child_name=child.name if child else "Chưa gán",
         daily_limit_minutes=(
             child.daily_limit_minutes if child else 120
         ),

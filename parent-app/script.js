@@ -753,14 +753,35 @@ let API_BASE = "http://127.0.0.1:8008";
                 if (!res.ok) return;
                 currentChildren = await res.json();
 
+                const overviewStatus = document.getElementById("overview-child-status");
                 const active = currentChildren.find(c => c.is_active) || currentChildren[0];
                 if (active) {
                     if (headerActive) headerActive.textContent = `${active.avatar || '🧒'} ${active.name}`;
                     if (overviewChild) overviewChild.textContent = `${active.avatar || '🧒'} ${active.name}`;
+                    if (overviewStatus) {
+                        overviewStatus.textContent = "Đang hoạt động";
+                        overviewStatus.className = "text-[10px] text-emerald-600 font-semibold";
+                    }
+                } else {
+                    if (headerActive) headerActive.textContent = `Chưa có hồ sơ`;
+                    if (overviewChild) overviewChild.textContent = `Chưa có hồ sơ`;
+                    if (overviewStatus) {
+                        overviewStatus.textContent = "Bấm để thêm hồ sơ";
+                        overviewStatus.className = "text-[10px] text-slate-400 font-semibold";
+                    }
                 }
 
                 if (currentChildren.length === 0) {
-                    container.innerHTML = `<p class="text-slate-400 text-xs italic py-2 text-center col-span-full">Chưa có hồ sơ trẻ nào. Bấm 'Thêm hồ sơ bé' để tạo!</p>`;
+                    container.innerHTML = `
+                        <div class="p-8 text-center text-slate-500 bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl col-span-full flex flex-col items-center justify-center gap-2">
+                            <span class="text-4xl block">🧒</span>
+                            <div class="font-bold text-xs text-slate-700">Chưa có hồ sơ của con</div>
+                            <p class="text-[11px] text-slate-400 max-w-sm">Phụ huynh hãy tạo hồ sơ ban đầu cho bé để cài đặt tên, mã PIN và giới hạn thời gian.</p>
+                            <button onclick="openChildProfileModal()" class="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1.5">
+                                <span>+ Thêm Hồ Sơ Cho Bé</span>
+                            </button>
+                        </div>
+                    `;
                     return;
                 }
 

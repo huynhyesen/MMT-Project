@@ -981,7 +981,7 @@ def get_usage_stats(db: Session = Depends(database.get_db)):
         ))
 
     active_child = db.query(models.ChildProfile).filter(models.ChildProfile.is_active == True).first()
-    child_name = active_child.name if active_child else "Bé An"
+    child_name = active_child.name if active_child else "Chưa có hồ sơ"
     child_daily_limit = active_child.daily_limit_minutes if active_child and active_child.daily_limit_minutes else 120
     child_remaining_seconds = max(0, (child_daily_limit * 60) - total_actual_sec)
     child_remaining = max(0, child_daily_limit - total_minutes)
@@ -1062,22 +1062,8 @@ async def update_curfew(req: schemas.CurfewUpdateRequest, db: Session = Depends(
 # ==========================================
 @app.get("/children/", response_model=List[schemas.ChildProfileResponse])
 def get_children(db: Session = Depends(database.get_db)):
-    """Lấy danh sách tất cả hồ sơ trẻ em. Tự khởi tạo hồ sơ mặc định nếu chưa có."""
-    profiles = db.query(models.ChildProfile).order_by(models.ChildProfile.id.asc()).all()
-    if not profiles:
-        default_child = models.ChildProfile(
-            name="Bé An",
-            avatar="🧒",
-            age=10,
-            pin="1234",
-            daily_limit_minutes=120,
-            is_active=True
-        )
-        db.add(default_child)
-        db.commit()
-        db.refresh(default_child)
-        profiles = [default_child]
-    return profiles
+    """Lấy danh sách tất cả hồ sơ trẻ em (trống nếu phụ huynh chưa thêm)."""
+    return db.query(models.ChildProfile).order_by(models.ChildProfile.id.asc()).all()
 
 @app.post("/children/", response_model=schemas.ChildProfileResponse)
 async def create_child(child: schemas.ChildProfileCreate, db: Session = Depends(database.get_db)):
@@ -1176,14 +1162,13 @@ async def login_child(req: schemas.ChildLoginRequest, db: Session = Depends(data
     })
     return {"success": True, "message": f"Đăng nhập thành công với tư cách {target.name}!", "child": target}
 
-@app.get("/children/active", response_model=schemas.ChildProfileResponse)
+@app.get("/children/active", response_model=Optional[schemas.ChildProfileResponse])
 def get_active_child(db: Session = Depends(database.get_db)):
-    """Lấy hồ sơ trẻ đang đăng nhập."""
+    """Lấy hồ sơ trẻ đang đăng nhập (hoặc None nếu chưa có hồ sơ)."""
     active = db.query(models.ChildProfile).filter(models.ChildProfile.is_active == True).first()
     if not active:
-        all_children = get_children(db)
-        if all_children:
-            active = all_children[0]
+        active = db.query(models.ChildProfile).first()
+        if active:
             active.is_active = True
             db.commit()
     return active

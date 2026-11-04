@@ -72,14 +72,28 @@ for /f "usebackq delims=" %%i in (`python -c "import socket; s = socket.socket(s
 
 :: 7. Khởi động Máy chủ Backend
 echo [*] Đang khởi động Máy chủ Backend ^(Cổng 8008^)...
+set "PYTHONPATH=%~dp0"
 start "MMT Backend Server" /min ".venv\Scripts\python.exe" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8008
 
 :: 8. Chờ Server thực sự sẵn sàng nhận kết nối (tối đa 10 giây)
 echo [*] Đang chờ máy chủ phản hồi...
+set "SERVER_UP=0"
 for /l %%x in (1, 1, 10) do (
     timeout /t 1 /nobreak >nul
     netstat -an | findstr ":8008" | findstr "LISTENING" >nul 2>&1
-    if !errorlevel! equ 0 goto server_ready
+    if !errorlevel! equ 0 (
+        set "SERVER_UP=1"
+        goto server_ready
+    )
+)
+
+if "!SERVER_UP!"=="0" (
+    echo [LỖI] Máy chủ Backend không thể khởi động trên cổng 8008!
+    echo Vui lòng kiểm tra lại tiến trình hoặc chạy lệnh sau để kiểm tra lỗi:
+    echo   .venv\Scripts\python.exe -m uvicorn backend.app.main:app --port 8008
+    echo.
+    pause
+    exit /b 1
 )
 
 :server_ready

@@ -91,6 +91,7 @@ LAN_IP=$("$VENV_PYTHON" -c "import socket; s = socket.socket(socket.AF_INET, soc
 
 # 7. Khởi động Backend
 echo "[*] Đang khởi động Máy chủ Backend (Cổng $PORT)..."
+export PYTHONPATH="$BASE_DIR:${PYTHONPATH:-}"
 "$VENV_PYTHON" -m uvicorn backend.app.main:app --host 0.0.0.0 --port "$PORT" &
 SERVER_PID=$!
 

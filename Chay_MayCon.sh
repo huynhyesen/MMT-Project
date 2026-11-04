@@ -37,7 +37,7 @@ if [ ! -x "$VENV_PYTHON" ]; then
     echo "[*] Đang tạo môi trường ảo Python (.venv)..."
     rm -rf "$BASE_DIR/.venv"
     sudo -u "$REAL_USER" python3 -m venv "$BASE_DIR/.venv"
-    if [ $? -ne 0 ] \vert{}\vert{} [ ! -x "$VENV_PYTHON" ]; then
+    if [ $? -ne 0 ] || [ ! -x "$VENV_PYTHON" ]; then
         echo "[LỖI] Không thể tạo môi trường ảo (.venv)!"
         echo "Hãy chạy lệnh sau rồi thử lại: sudo apt update && sudo apt install -y python3-venv"
         rm -rf "$BASE_DIR/.venv"
@@ -121,3 +121,15 @@ if [ ! -f "agent/config.json" ]; then
     echo "[*] Thiết bị chưa ghép nối với máy Cha Mẹ."
     while true; do
         read -r -p "Nhập mã ghép nối từ Cha Mẹ: " pcode
+        if [ -n "$pcode" ]; then
+            break
+        fi
+        echo "[!] Mã ghép nối không được để trống!"
+    done
+    echo "[*] Đang tiến hành ghép nối thiết bị..."
+    "$VENV_PYTHON" agent/agent_main.py --pair-code "$pcode" --server "$pserver"
+else
+    echo ""
+    echo "[*] Đang khởi chạy Trợ lý An toàn..."
+    "$VENV_PYTHON" agent/agent_main.py --server "$pserver"
+fi

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 
@@ -23,8 +23,7 @@ class ChildRequestResponse(BaseModel):
     parent_feedback: Optional[str] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class RequestActionUpdate(BaseModel):
     status: str # "APPROVED" hoặc "REJECTED"
@@ -59,7 +58,7 @@ class UsageStatsResponse(BaseModel): #default
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
     wakeup_hour: str = "06:00"
-    child_name: Optional[str] = "Bé An"
+    child_name: Optional[str] = "Chưa có hồ sơ"
     daily_limit_minutes: Optional[int] = 120
     remaining_minutes: Optional[int] = 120
     total_seconds: Optional[int] = 0
@@ -90,8 +89,7 @@ class AppWebRuleResponse(BaseModel):
     remaining_formatted: str
     is_expired: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Schemas cho Thiết lập lần đầu (Onboarding Setup)
 class OnboardingSetupRequest(BaseModel):
@@ -119,8 +117,7 @@ class ChildProfileResponse(BaseModel):
     is_active: bool
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChildLoginRequest(BaseModel):
@@ -142,8 +139,7 @@ class AlertLogResponse(BaseModel):
     is_web: bool
     timestamp: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Schemas cho Cập nhật Khung giờ giới nghiêm
 class CurfewUpdateRequest(BaseModel):
@@ -188,8 +184,7 @@ class DeviceResponse(BaseModel):
     last_seen: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DeviceConfigResponse(BaseModel):
     device_hwid: str

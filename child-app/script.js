@@ -660,8 +660,13 @@ let API_BASE = "http://127.0.0.1:8008";
                 const res = await fetch(`${API_BASE}/children/active`);
                 if (res.ok) {
                     currentChild = await res.json();
-                    document.getElementById("child-avatar").textContent = currentChild.avatar || "🧒";
-                    document.getElementById("child-name").textContent = currentChild.name || "Bé An";
+                    if (currentChild && currentChild.name) {
+                        document.getElementById("child-avatar").textContent = currentChild.avatar || "🧒";
+                        document.getElementById("child-name").textContent = currentChild.name;
+                    } else {
+                        document.getElementById("child-avatar").textContent = "🧒";
+                        document.getElementById("child-name").textContent = "Chưa có hồ sơ";
+                    }
                 }
             } catch (e) {}
         }
@@ -672,14 +677,18 @@ let API_BASE = "http://127.0.0.1:8008";
                 if (res.ok) {
                     allChildrenList = await res.json();
                     const listEl = document.getElementById("child-login-list");
-                    listEl.innerHTML = allChildrenList.map(c => `
-                        <div onclick="selectChildToLogin(${c.id}, '${c.name}', '${c.pin || ''}')" class="cursor-pointer p-4 rounded-2xl border-2 ${currentChild && currentChild.id === c.id ? 'border-blue-500 bg-blue-50/70' : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'} text-center transition flex flex-col items-center gap-1.5 shadow-xs">
-                            <span class="text-4xl p-2 bg-white rounded-2xl shadow-xs border border-slate-100">${c.avatar || '🧒'}</span>
-                            <span class="font-bold text-xs text-slate-800">${c.name}</span>
-                            <span class="text-[10px] text-slate-500">${c.age} tuổi</span>
-                            ${currentChild && currentChild.id === c.id ? '<span class="text-[9px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full mt-1">Đang đăng nhập</span>' : ''}
-                        </div>
-                    `).join("");
+                    if (allChildrenList.length === 0) {
+                        listEl.innerHTML = `<p class="text-slate-400 text-xs italic py-4 text-center col-span-full">Chưa có hồ sơ trẻ nào. Phụ huynh hãy tạo hồ sơ trên Trạm điều khiển!</p>`;
+                    } else {
+                        listEl.innerHTML = allChildrenList.map(c => `
+                            <div onclick="selectChildToLogin(${c.id}, '${c.name}', '${c.pin || ''}')" class="cursor-pointer p-4 rounded-2xl border-2 ${currentChild && currentChild.id === c.id ? 'border-blue-500 bg-blue-50/70' : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'} text-center transition flex flex-col items-center gap-1.5 shadow-xs">
+                                <span class="text-4xl p-2 bg-white rounded-2xl shadow-xs border border-slate-100">${c.avatar || '🧒'}</span>
+                                <span class="font-bold text-xs text-slate-800">${c.name}</span>
+                                <span class="text-[10px] text-slate-500">${c.age} tuổi</span>
+                                ${currentChild && currentChild.id === c.id ? '<span class="text-[9px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full mt-1">Đang đăng nhập</span>' : ''}
+                            </div>
+                        `).join("");
+                    }
                     document.getElementById("pin-login-box").classList.add("hidden");
                     document.getElementById("childPinInput").value = "";
                     document.getElementById("child-login-modal").classList.remove("hidden");
