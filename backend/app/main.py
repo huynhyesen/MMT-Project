@@ -9,8 +9,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
+from contextlib import asynccontextmanager
 import json
 import uuid
 from . import database, models, schemas
@@ -113,7 +114,98 @@ try:
 except Exception:
     pass
 
-app = FastAPI(title="Parental Control Backend", version="1.3.0")
+# Biến theo dõi ngày để tự động reset mỗi ngày (Daily Rollover)
+current_day_str = datetime.now().strftime("%Y-%m-%d")
+
+def perform_daily_reset(db: Session, today_str: Optional[str] = None):
+    """Thực hiện đầy đủ quy trình chuyển ngày tự động (Daily Rollover) chuẩn hóa:
+    1. Đặt lại số phút đã sử dụng của tất cả các quy tắc ứng dụng & web về 0.
+    2. Dọn sạch nhật ký hoạt động telemetry cũ để ngày mới tính từ 0 giây.
+    3. Tự động đánh dấu hết hạn (EXPIRED) các yêu cầu xin thêm giờ của hôm trước.
+    4. Phát sự kiện WebSocket DAILY_RESET_TRIGGERED để đồng bộ tức thời đến Dashboard Cha Mẹ và Máy Con.
+    """
+    global current_day_str
+    if not today_str:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+    current_day_str = today_str
+
+    # 1. Đặt lại số phút đã sử dụng của tất cả quy tắc về 0
+    for rule in db.query(models.AppWebRule).all():
+        rule.used_minutes = 0
+
+    # 2. Xóa nhật ký telemetry cũ của ngày hôm trước
+    db.query(models.MinimalTelemetryLog).delete()
+
+    # 3. Đánh dấu hết hạn các yêu cầu xin giờ chưa duyệt từ hôm trước
+    db.query(models.ChildRequest).filter(
+        models.ChildRequest.status == "PENDING"
+    ).update({"status": "EXPIRED"})
+
+    db.commit()
+
+    # 4. Gửi tín hiệu thông báo thời gian thực qua WebSocket
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(manager.broadcast_json({
+            "type": "DAILY_RESET_TRIGGERED",
+            "date": today_str,
+            "message": f"🌅 Bắt đầu ngày mới ({today_str}): Thời gian sử dụng đã được làm mới về 0 phút."
+        }))
+    except Exception:
+        pass
+
+
+def check_and_perform_daily_reset(db: Session):
+    """Tự động kiểm tra chuyển ngày mỗi khi có API request: nếu bước sang ngày mới, tự động reset."""
+    global current_day_str
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if today_str != current_day_str:
+        perform_daily_reset(db, today_str)
+
+
+async def daily_rollover_worker():
+    """Tác vụ chạy ngầm định kỳ theo dõi đồng hồ:
+    Đúng 00:00:00 hàng ngày, tự động kích hoạt reset chuyển ngày mà không cần đợi người dùng bấm hay gửi request.
+    """
+    while True:
+        try:
+            now = datetime.now()
+            # Tính số giây còn lại đến 00:00:01 của ngày kế tiếp
+            tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=1, microsecond=0)
+            seconds_until_midnight = max(1.0, (tomorrow - now).total_seconds())
+
+            # Ngủ tối đa 60 giây mỗi chu kỳ để phát hiện kịp thời nếu máy tính bị đổi giờ / sleep thức dậy
+            await asyncio.sleep(min(seconds_until_midnight, 60.0))
+
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            global current_day_str
+            if today_str != current_day_str:
+                db = database.SessionLocal()
+                try:
+                    perform_daily_reset(db, today_str)
+                finally:
+                    db.close()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            await asyncio.sleep(60.0)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Khởi chạy tác vụ nền tự động chuyển ngày đúng 00:00:00
+    rollover_task = asyncio.create_task(daily_rollover_worker())
+    try:
+        yield
+    finally:
+        rollover_task.cancel()
+        try:
+            await rollover_task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="Parental Control Backend", version="1.3.0", lifespan=lifespan)
 
 allowed_origins = [
     origin.strip()
@@ -151,21 +243,6 @@ if os.path.exists(PARENT_APP_DIR):
 if os.path.exists(CHILD_APP_DIR):
     app.mount("/child", StaticFiles(directory=CHILD_APP_DIR, html=True), name="child-app")
 
-# Biến theo dõi ngày để tự động reset mỗi ngày (Daily Rollover)
-current_day_str = datetime.now().strftime("%Y-%m-%d")
-
-def check_and_perform_daily_reset(db: Session):
-    """Tự động kiểm tra chuyển ngày: nếu bước sang ngày mới, tự động reset thời gian."""
-    global current_day_str
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    if today_str != current_day_str:
-        current_day_str = today_str
-        # Đặt lại thời gian sử dụng về 0
-        for rule in db.query(models.AppWebRule).all():
-            rule.used_minutes = 0
-        # Xóa nhật ký telemetry cũ của ngày hôm trước
-        db.query(models.MinimalTelemetryLog).delete()
-        db.commit()
 
 @app.get("/")
 def read_root(request: Request):
@@ -827,16 +904,8 @@ def delete_rule(rule_id: str, db: Session = Depends(database.get_db)):
 @app.post("/reset/daily", include_in_schema=False)
 @app.post("/reset/usage")
 async def reset_usage_time(db: Session = Depends(database.get_db)):
-    """Reset toàn bộ thời gian sử dụng hôm nay về 0."""
-    db.query(models.MinimalTelemetryLog).delete()
-    for r in db.query(models.AppWebRule).all():
-        r.used_minutes = 0
-    db.commit()
-
-    await manager.broadcast_json({
-        "type": "USAGE_RESET",
-        "message": "Phụ huynh đã đặt lại toàn bộ thời gian sử dụng hôm nay về 0."
-    })
+    """Reset toàn bộ thời gian sử dụng hôm nay về 0 (Thủ công từ Phụ huynh)."""
+    perform_daily_reset(db)
     return {"status": "success", "message": "Đã đặt lại thời gian sử dụng về 0."}
 
 @app.post("/reset/rules")
@@ -883,6 +952,7 @@ async def reset_all_system(db: Session = Depends(database.get_db)):
     ]
     db.add_all(default_rules)
     db.query(models.ChildRequest).delete()
+    db.query(models.Device).delete()
     db.commit()
 
     await manager.broadcast_json({

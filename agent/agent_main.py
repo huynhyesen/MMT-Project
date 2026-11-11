@@ -340,9 +340,9 @@ async def listen_to_server():
                                                 print(f"✅ [AGENT] Đã gỡ từ khóa cấm: {kw}")
                                     sync_allowed_rules()
 
-                        elif msg_type in ["RULES_RESET", "FULL_RESET", "RULES_UPDATED", "LIMIT_UPDATED", "ONBOARDING_UPDATED"]:
-                            print("🔄 [AGENT] Nhận tín hiệu cập nhật cấu hình quy tắc từ Phụ huynh!")
-                            if msg_type in ["RULES_RESET", "FULL_RESET", "LIMIT_UPDATED"]:
+                        elif msg_type in ["RULES_RESET", "FULL_RESET", "RULES_UPDATED", "LIMIT_UPDATED", "ONBOARDING_UPDATED", "DAILY_RESET_TRIGGERED", "DAILY_RESET", "USAGE_RESET"]:
+                            print(f"🔄 [AGENT] Nhận tín hiệu cập nhật / làm mới từ máy chủ ({msg_type})!")
+                            if msg_type in ["RULES_RESET", "FULL_RESET", "LIMIT_UPDATED", "DAILY_RESET_TRIGGERED", "DAILY_RESET", "USAGE_RESET"]:
                                 time_limit_locked = False
                                 hide_kiosk_lock()
                             sync_allowed_rules()

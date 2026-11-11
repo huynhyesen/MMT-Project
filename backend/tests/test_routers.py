@@ -31,6 +31,12 @@ class MockQuery:
     def all(self):
         return self.result if self.result is not None else []
 
+    def delete(self, *args, **kwargs):
+        return 0
+
+    def update(self, *args, **kwargs):
+        return 0
+
 
 class MockDatabase:
     def __init__(self):
@@ -440,3 +446,68 @@ def test_relay_websocket_disconnect(
 
     assert messages[0]["type"] == "DEVICE_CONNECTED_WAN"
     assert messages[-1]["type"] == "DEVICE_DISCONNECTED_WAN"
+
+
+# ============================================================
+# STANDARDIZED DAILY ROLLOVER & USAGE RESET
+# ============================================================
+
+def test_daily_rollover_and_usage_reset(client):
+    from app import database, models
+    from app.main import perform_daily_reset
+
+    db = database.SessionLocal()
+    try:
+        # Tạo dữ liệu giả định trong ngày
+        rule = models.AppWebRule(
+            rule_type="APP",
+            target_value="test_game.exe",
+            action="BLOCK",
+            time_limit_minutes=60,
+            used_minutes=45
+        )
+        db.add(rule)
+        log = models.MinimalTelemetryLog(
+            app_name="test_game.exe",
+            duration_seconds=2700
+        )
+        db.add(log)
+        req = models.ChildRequest(
+            request_type="TIME_EXTENSION",
+            target_detail="30",
+            reason_from_child="Học bài",
+            status="PENDING"
+        )
+        db.add(req)
+        db.commit()
+
+        # Thực thi hàm chuẩn hóa daily reset
+        perform_daily_reset(db, today_str="2099-01-01")
+
+        # Kiểm tra kết quả
+        refreshed_rule = db.query(models.AppWebRule).filter(
+            models.AppWebRule.target_value == "test_game.exe"
+        ).first()
+        assert refreshed_rule.used_minutes == 0
+
+        logs_count = db.query(models.MinimalTelemetryLog).count()
+        assert logs_count == 0
+
+        refreshed_req = db.query(models.ChildRequest).filter(
+            models.ChildRequest.id == req.id
+        ).first()
+        assert refreshed_req.status == "EXPIRED"
+
+        # Dọn dẹp
+        db.delete(refreshed_rule)
+        db.delete(refreshed_req)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_reset_usage_endpoint(client):
+    res = client.post("/reset/usage")
+    assert res.status_code == 200
+    assert res.json()["status"] == "success"
+

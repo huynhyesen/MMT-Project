@@ -258,9 +258,11 @@ let API_BASE = "http://127.0.0.1:8008";
                             fetchRequests();
                             fetchRules();
                             fetchUsageStats();
-                        } else if (data.type === "USAGE_RESET" || data.type === "DAILY_RESET_TRIGGERED") {
+                        } else if (data.type === "USAGE_RESET" || data.type === "DAILY_RESET_TRIGGERED" || data.type === "DAILY_RESET") {
                             fetchUsageStats();
                             fetchRules();
+                            fetchRequests();
+                            showToast("🌅 Bắt đầu ngày mới: Thời gian sử dụng đã được làm mới tự động!", "success");
                         }
                     } catch (e) {
                         console.log("Raw WS message:", event.data);
@@ -1027,10 +1029,13 @@ let API_BASE = "http://127.0.0.1:8008";
 
                 if (devices.length === 0) {
                     container.innerHTML = `
-                        <div class="p-8 text-center text-slate-400 text-xs col-span-2 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                        <div class="p-8 text-center text-slate-400 text-xs col-span-2 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 flex flex-col items-center justify-center">
                             <span class="text-3xl block mb-2">💻</span>
-                            Chưa có thiết bị nào được ghép nối.<br>
-                            Hãy bấm <strong>➕ Thêm Thiết Bị Của Con</strong> để tạo hồ sơ và lấy mã ghép nối cài lên máy tính của con!
+                            <span class="font-medium text-slate-600 mb-1">Chưa có thiết bị nào được ghép nối</span>
+                            <p class="max-w-md text-slate-400 mb-4">Hãy tạo hồ sơ thiết bị để nhận mã ghép nối và cài đặt phần mềm bảo vệ lên máy tính của con.</p>
+                            <button onclick="openAddDeviceModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow-xs transition">
+                                ➕ Thêm Thiết Bị Của Con
+                            </button>
                         </div>
                     `;
                     return;
@@ -1107,10 +1112,14 @@ let API_BASE = "http://127.0.0.1:8008";
 
         function openAddDeviceModal() {
             const selectEl = document.getElementById("devChildProfile");
-            if (selectEl && Array.isArray(currentChildren) && currentChildren.length > 0) {
-                selectEl.innerHTML = `<option value="">-- Chưa gán bé cụ thể --</option>` + currentChildren.map(c => `
-                    <option value="${c.id}">${c.avatar || '🧒'} ${c.name} (${c.age} tuổi)</option>
-                `).join("");
+            if (selectEl) {
+                if (Array.isArray(currentChildren) && currentChildren.length > 0) {
+                    selectEl.innerHTML = `<option value="">-- Chưa gán bé cụ thể --</option>` + currentChildren.map(c => `
+                        <option value="${c.id}">${c.avatar || '🧒'} ${c.name} (${c.age} tuổi)</option>
+                    `).join("");
+                } else {
+                    selectEl.innerHTML = `<option value="">-- Chưa có hồ sơ bé (sẽ gán sau) --</option>`;
+                }
             }
             document.getElementById("create-device-form").classList.remove("hidden");
             document.getElementById("device-paired-instructions").classList.add("hidden");

@@ -494,6 +494,9 @@ def delete_device(
             detail="Không tìm thấy thiết bị"
         )
 
+    db.query(models.TimeLimit).filter(models.TimeLimit.device_id == device.id).delete()
+    db.query(models.AppWebRule).filter(models.AppWebRule.device_id == device.id).delete()
+
     db.delete(device)
     db.commit()
 

@@ -333,7 +333,7 @@ let API_BASE = "http://127.0.0.1:8008";
                 fetchUsageStats();
             } else if (type === "CURFEW_UPDATED") {
                 fetchUsageStats();
-            } else if (type === "DAILY_RESET_TRIGGERED") {
+            } else if (type === "DAILY_RESET_TRIGGERED" || type === "DAILY_RESET") {
                 showToast("🌅 Chào ngày mới! Thời gian đã được làm mới tự động.", "emerald");
                 countdownSeconds = -1;
                 lastServerDailyLimit = null;
