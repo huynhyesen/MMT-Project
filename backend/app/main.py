@@ -1,37 +1,58 @@
 import os
+import logging
 import asyncio
 import time
-import random
-import string
-import hashlib
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
-from datetime import datetime
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
+from datetime import datetime, timezone
 from typing import List, Optional
+from contextlib import asynccontextmanager
 import json
-import uuid
-from . import database, models, schemas
+from . import database, models, schemas, security
 from fastapi.middleware.cors import CORSMiddleware
+
+from .services.classification import (
+    extract_target_name,
+    is_system_process,
+    classify_item
+)
+
+from .services.formatters import (
+    format_duration,
+    format_remaining,
+    is_within_curfew
+)
+
+from .services.realtime import manager
+
 
 # Tự động tạo bảng database nếu chưa tồn tại
 models.Base.metadata.create_all(bind=database.engine)
 
 def auto_migrate_db():
-    """Tự động bổ sung các cột mới vào SQLite nếu chưa có."""
+    """Bổ sung các cột còn thiếu trong SQLite mà không làm mất dữ liệu."""
     import sqlite3
+
+    conn = sqlite3.connect(database.DB_PATH)
+
     try:
-        conn = sqlite3.connect(database.DB_PATH)
         cursor = conn.cursor()
+
+        # Migration cho bảng devices.
         cursor.execute("PRAGMA table_info(devices)")
-        cols = [row[1] for row in cursor.fetchall()]
-        if cols:
-            device_cols = {
+        existing_device_cols = {row[1] for row in cursor.fetchall()}
+
+        if existing_device_cols:
+            device_columns = {
                 "user_id": "VARCHAR(50)",
                 "device_hwid": "VARCHAR(100)",
                 "pairing_code": "VARCHAR(20)",
+                "pairing_expires_at": "DATETIME",
                 "pairing_token": "VARCHAR(100)",
                 "is_paired": "BOOLEAN DEFAULT 0",
                 "child_profile_id": "INTEGER",
@@ -40,21 +61,69 @@ def auto_migrate_db():
                 "anti_tamper_active": "BOOLEAN DEFAULT 1",
                 "content_filter_active": "BOOLEAN DEFAULT 1",
                 "last_seen": "DATETIME",
-                "created_at": "DATETIME DEFAULT CURRENT_TIMESTAMP"
+                "created_at": "DATETIME DEFAULT CURRENT_TIMESTAMP",
             }
-            for col_name, col_type in device_cols.items():
-                if col_name not in cols:
-                    cursor.execute(f"ALTER TABLE devices ADD COLUMN {col_name} {col_type}")
 
+            for column_name, column_type in device_columns.items():
+                if column_name not in existing_device_cols:
+                    cursor.execute(
+                        f"ALTER TABLE devices ADD COLUMN {column_name} {column_type}"
+                    )
+                    logging.info(
+                        "Database migration: added devices.%s",
+                        column_name,
+                    )
+
+        # Migration cho bảng alert_logs (nếu bảng đã tồn tại).
         cursor.execute("PRAGMA table_info(alert_logs)")
-        alert_cols = [row[1] for row in cursor.fetchall()]
-        if alert_cols and "category" not in alert_cols:
-            cursor.execute("ALTER TABLE alert_logs ADD COLUMN category VARCHAR(50) DEFAULT 'UNAPPROVED_ACCESS'")
+        existing_alert_cols = {row[1] for row in cursor.fetchall()}
+
+        if existing_alert_cols and "category" not in existing_alert_cols:
+            cursor.execute(
+                "ALTER TABLE alert_logs "
+                "ADD COLUMN category VARCHAR(50) "
+                "DEFAULT 'UNAPPROVED_ACCESS'"
+            )
+            logging.info("Database migration: added alert_logs.category")
+
+        for table in ("minimal_telemetry_logs", "child_requests"):
+            columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+            if "device_id" not in columns:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN device_id VARCHAR REFERENCES devices(id)")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS ix_{table}_device_id ON {table}(device_id)")
+
+        # Keep the paired device first when upgrading a database with duplicate assignments.
+        cursor.execute("""
+            UPDATE devices
+            SET child_profile_id = NULL, is_paired = 0, status = 'OFFLINE',
+                pairing_code = NULL, pairing_expires_at = NULL, pairing_token = NULL,
+                device_hwid = NULL
+            WHERE id IN (
+                SELECT id FROM (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY child_profile_id
+                        ORDER BY is_paired DESC, last_seen DESC, created_at DESC, id
+                    ) AS position FROM devices WHERE child_profile_id IS NOT NULL
+                ) WHERE position > 1
+            )
+        """)
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_child_profile ON devices(child_profile_id)")
+        for child_id, pin in cursor.execute("SELECT id, pin FROM child_profiles").fetchall():
+            if pin and not security.is_pin_hash(pin):
+                cursor.execute("UPDATE child_profiles SET pin = ? WHERE id = ?", (security.hash_pin(pin), child_id))
 
         conn.commit()
+
+    except sqlite3.Error:
+        conn.rollback()
+        logging.exception(
+            "Database migration failed for %s",
+            database.DB_PATH,
+        )
+        raise
+
+    finally:
         conn.close()
-    except Exception:
-        pass
 
 auto_migrate_db()
 
@@ -69,45 +138,176 @@ try:
 except Exception:
     pass
 
-app = FastAPI(title="Parental Control Backend", version="1.3.0")
+def clear_usage(db: Session, cutoff=None):
+    logs = db.query(models.MinimalTelemetryLog)
+    if cutoff is not None:
+        logs = logs.filter(models.MinimalTelemetryLog.timestamp < cutoff)
+    logs.delete()
+    for rule in db.query(models.AppWebRule).all():
+        rule.used_minutes = 0
+
+
+def perform_daily_reset(db: Session, today_str: Optional[str] = None, *, automatic=False):
+    """Reset daily counters and pending requests in one transaction."""
+    today_str = today_str or datetime.now().date().isoformat()
+    cutoff = datetime.fromisoformat(today_str).astimezone(timezone.utc).replace(tzinfo=None)
+    if automatic:
+        previous_day = db.get(models.DailyRollover, 1)
+        if previous_day and previous_day.day >= today_str:
+            return False
+        # Initialize a migrated database only after checking for stale activity.
+        if previous_day is None:
+            stale = db.query(models.MinimalTelemetryLog.id).filter(
+                models.MinimalTelemetryLog.timestamp < cutoff
+            ).first() or db.query(models.ChildRequest.id).filter(
+                models.ChildRequest.status == "PENDING",
+                models.ChildRequest.created_at < cutoff,
+            ).first()
+            if not stale:
+                db.execute(sqlite_insert(models.DailyRollover).values(id=1, day=today_str)
+                           .on_conflict_do_nothing(index_elements=["id"]))
+                db.commit()
+                return False
+    claim = sqlite_insert(models.DailyRollover).values(id=1, day=today_str)
+    claimed = db.execute(claim.on_conflict_do_update(
+        index_elements=["id"],
+        set_={"day": today_str},
+        where=models.DailyRollover.day < today_str if automatic else None,
+    ))
+    if automatic and claimed.rowcount != 1:
+        db.rollback()
+        return False
+    clear_usage(db, cutoff if automatic else None)
+    pending = db.query(models.ChildRequest).filter(models.ChildRequest.status == "PENDING")
+    if automatic:
+        pending = pending.filter(models.ChildRequest.created_at < cutoff)
+    pending.update({models.ChildRequest.status: "EXPIRED"})
+    db.commit()
+    return True
+
+
+async def notify_daily_reset():
+    await manager.broadcast_json({"type": "DAILY_RESET_TRIGGERED"})
+
+
+async def daily_rollover_worker():
+    while True:
+        await asyncio.sleep(15)
+        try:
+            with database.SessionLocal() as db:
+                if perform_daily_reset(db, automatic=True):
+                    await notify_daily_reset()
+        except Exception:
+            logging.exception("Daily reset failed; will retry")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    with database.SessionLocal() as db:
+        perform_daily_reset(db, automatic=True)
+    rollover_task = asyncio.create_task(daily_rollover_worker())
+    try:
+        yield
+    finally:
+        rollover_task.cancel()
+        try:
+            await rollover_task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="Parental Control Backend", version="1.3.0", lifespan=lifespan)
+
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if origin.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_origin_regex=".*",
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+DEVICE_API = {
+    ("GET", "/children/active"), ("GET", "/usage-stats"), ("GET", "/rules"),
+    ("GET", "/curfew"), ("GET", "/requests"), ("POST", "/requests"),
+    ("POST", "/telemetry"), ("POST", "/check-permission"), ("POST", "/classify"),
+    ("POST", "/alerts"), ("POST", "/ai/content-check"),
+}
+
+
+@app.middleware("http")
+async def authorize_request(request: Request, call_next):
+    path = request.url.path.rstrip("/") or "/"
+    method = request.method
+    if method == "OPTIONS":
+        return await call_next(request)
+    if method not in {"GET", "HEAD"} and not security.same_origin(request):
+        return JSONResponse({"detail": "Nguồn yêu cầu không hợp lệ."}, status_code=403)
+    if (method in {"GET", "HEAD"} and (
+        path in {"/", "/favicon.ico"} or path == "/child" or
+        path.startswith(("/child/", "/assets/"))
+    )) or (method, path) == ("POST", "/devices/pair"):
+        return await call_next(request)
+    if (method, path) in {("GET", "/children/assigned"), ("POST", "/children/login")}:
+        request.state.device = security.resolve_device(request, enrollment=True)
+        if request.state.device:
+            return await call_next(request)
+        return JSONResponse({"detail": "Hãy mở dashboard từ Agent đã ghép nối."}, status_code=401)
+    parent_console = request.headers.get("x-mmt-console") == "parent"
+    if not parent_console and ((method, path) in DEVICE_API or (method == "GET" and path.startswith("/devices/") and path.endswith("/config"))):
+        request.state.device = security.resolve_device(
+            request, agent_only=path.endswith("/config")
+        )
+        if request.state.device:
+            return await call_next(request)
+    parent = security.parent_session(request)
+    if not parent:
+        if not os.getenv("MMT_PARENT_PASSWORD"):
+            return JSONResponse({"detail": "Cần cấu hình MMT_PARENT_PASSWORD trên máy chủ."}, status_code=503)
+        headers = {"WWW-Authenticate": 'Basic realm="MMT Parent"'} if path == "/parent" else {}
+        return JSONResponse({"detail": "Cần xác thực phụ huynh."}, status_code=401, headers=headers)
+    response = await call_next(request)
+    if request.cookies.get(security.PARENT_COOKIE) != parent:
+        response.set_cookie(
+            security.PARENT_COOKIE, parent, httponly=True, samesite="strict",
+            secure=request.url.scheme == "https", max_age=8 * 3600,
+        )
+    return response
+
+
+def client_device(request: Request):
+    return getattr(request.state, "device", None)
+
+
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(("/parent", "/child")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 # Đường dẫn thư mục static UI
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PARENT_APP_DIR = os.path.join(BASE_DIR, "parent-app")
 CHILD_APP_DIR = os.path.join(BASE_DIR, "child-app")
 
+app.mount("/assets", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "assets")), name="dashboard-assets")
+
 if os.path.exists(PARENT_APP_DIR):
     app.mount("/parent", StaticFiles(directory=PARENT_APP_DIR, html=True), name="parent-app")
 if os.path.exists(CHILD_APP_DIR):
     app.mount("/child", StaticFiles(directory=CHILD_APP_DIR, html=True), name="child-app")
 
-# Biến theo dõi ngày để tự động reset mỗi ngày (Daily Rollover)
-current_day_str = datetime.now().strftime("%Y-%m-%d")
-
-def check_and_perform_daily_reset(db: Session):
-    """Tự động kiểm tra chuyển ngày: nếu bước sang ngày mới, tự động reset thời gian và danh sách việc tốt."""
-    global current_day_str
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    if today_str != current_day_str:
-        current_day_str = today_str
-        # Đặt lại thời gian sử dụng về 0
-        for rule in db.query(models.AppWebRule).all():
-            rule.used_minutes = 0
-        # Đặt lại trạng thái việc tốt về TODO để con làm lại vào ngày mới
-        for task in db.query(models.Task).all():
-            task.status = "TODO"
-        # Xóa nhật ký telemetry cũ của ngày hôm trước
-        db.query(models.MinimalTelemetryLog).delete()
-        db.commit()
 
 @app.get("/")
 def read_root(request: Request):
@@ -121,7 +321,7 @@ def read_root(request: Request):
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>MMT - Hệ Thống Quản Lý Máy Tính Trẻ Em</title>
             <link rel="stylesheet" href="/parent/style.css">
-            <script src="https://cdn.tailwindcss.com"></script>
+            <link rel="stylesheet" href="/assets/dashboard.css">
         </head>
         <body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
             <div class="max-w-md w-full bg-slate-800 border border-slate-700 rounded-3xl p-6 md:p-8 text-center shadow-2xl space-y-6">
@@ -148,7 +348,7 @@ def read_root(request: Request):
                             <span class="text-xl">🚀</span>
                             <div class="text-left">
                                 <div>Góc Học Tập & Giải Trí Của Con</div>
-                                <div class="text-[11px] text-emerald-200 font-normal">Xem đếm ngược, web mở & việc tốt</div>
+                                <div class="text-[11px] text-emerald-200 font-normal">Xem đếm ngược, web mở & xin thêm giờ</div>
                             </div>
                         </div>
                         <span class="group-hover:translate-x-1 transition">➔</span>
@@ -174,241 +374,29 @@ def read_root(request: Request):
     }
 
 # ==========================================
-# CÁC HÀM TIỆN ÍCH PHÂN LOẠI & ĐỊNH DẠNG
-# ==========================================
-def extract_target_name(target: str) -> str:
-    """Trích xuất tên miền hoặc tên phần mềm sạch (bỏ giao thức, www, nhãn...)."""
-    if not target:
-        return ""
-    t = target.split("[")[0].strip()
-    if "://" in t:
-        t = t.split("://")[1]
-    t = t.split("/")[0].split("?")[0].split(":")[0]
-    if t.lower().startswith("www."):
-        t = t[4:]
-    return t
-
-def is_system_process(name: str) -> bool:
-    nl = name.lower().strip()
-    if any(nl.startswith(prefix) for prefix in ['kworker', 'kthread', 'rcu', 'pool_', 'irq/', 'ksoftirqd', 'systemd', 'migration', 'auditd']):
-        return True
-    return nl in {
-        'system', 'registry', 'svchost.exe', 'dbus-daemon', 'pipewire', 'pulseaudio', 
-        'xorg', 'gnome-shell', 'bash', 'sh', 'python', 'python3', 'uvicorn', 'idle',
-        'kthreadd', 'pool_workqueue_release', 'rcu_tasks_kthread'
-    }
-
-def classify_item(name: str) -> dict:
-    """Hệ thống AI phân loại và gán nhãn tự động cho website & ứng dụng."""
-    if not name or is_system_process(name):
-        return {
-            'category': 'Ứng dụng khác',
-            'tag': 'OTHER',
-            'icon': '💻',
-            'badge_color': 'bg-slate-100 text-slate-800 border-slate-300',
-            'default_limit': 60,
-            'is_educational': False
-        }
-
-    nl = name.lower().strip()
-    
-    # 1. Học tập & Giáo dục (LEARNING)
-    learning_keywords = [
-        'khanacademy', 'wikipedia', 'duolingo', 'scratch', 'coursera', 'edx', 'udemy', 'quizlet', 
-        'canvas', 'blackboard', 'hocmai', 'vioedu', 'vnedu', 'olm', 'k12online', 'vietjack', 
-        'tuyensinh247', 'geogebra', 'code.org', 'w3schools', 'leetcode', 'hackerrank', 'stackoverflow', 
-        'github', 'gitlab', 'python', 'sachmem', 'violet.vn', 'word', 'excel', 'powerpoint', 
-        'onenote', 'acrobat', 'reader', 'pdf', 'zoom', 'teams', 'classroom', 'meet',
-        '.edu', 'school', 'portal', 'lophoc', 'trithuc', 'tienganh', 'toan', 'vatly', 
-        'hoahoc', 'lichsu', 'dialy', 'ielts', 'toeic', 'learn', 'study', 'math'
-    ]
-    if any(k in nl for k in learning_keywords):
-        return {
-            'category': 'Học tập & Giáo dục',
-            'tag': 'LEARNING',
-            'icon': '📚',
-            'badge_color': 'bg-emerald-100 text-emerald-800 border-emerald-300',
-            'default_limit': 180,
-            'is_educational': True
-        }
-    
-    # 2. Giải trí & Game (ENTERTAINMENT)
-    entertainment_keywords = [
-        'youtube', 'youtu.be', 'netflix', 'spotify', 'roblox', 'minecraft', 'steam', 'epicgames', 
-        'league', 'valorant', 'genshin', 'fifa', 'pubg', 'game', 'friv', 'poki', 'bilibili', 
-        'twitch', 'anime', 'manga', 'truyen', 'comic', 'zingmp3', 'nhaccuatui', 'fptplay', 
-        'vieon', 'movie', 'film', 'cinema', 'chess', 'cotuong', 'caro', 'webtoon', 'soundcloud',
-        'apple music', 'zing', 'vtvgo', 'clip', 'video'
-    ]
-    if any(k in nl for k in entertainment_keywords):
-        return {
-            'category': 'Giải trí & Game',
-            'tag': 'ENTERTAINMENT',
-            'icon': '🎮',
-            'badge_color': 'bg-rose-100 text-rose-800 border-rose-300',
-            'default_limit': 45,
-            'is_educational': False
-        }
-        
-    # 3. Mạng xã hội & Chat (SOCIAL)
-    social_keywords = [
-        'discord', 'facebook', 'fb.com', 'messenger', 'zalo', 'telegram', 'tiktok', 'instagram', 
-        'threads', 'twitter', 'x.com', 'skype', 'viber', 'whatsapp', 'wechat', 'reddit', 
-        'pinterest', 'snapchat', 'tumblr', 'chat', 'direct'
-    ]
-    if any(k in nl for k in social_keywords):
-        return {
-            'category': 'Mạng xã hội & Chat',
-            'tag': 'SOCIAL',
-            'icon': '💬',
-            'badge_color': 'bg-blue-100 text-blue-800 border-blue-300',
-            'default_limit': 30,
-            'is_educational': False
-        }
-        
-    # 4. Công cụ & Tiện ích (UTILITY)
-    utility_keywords = [
-        'google', 'bing', 'chrome', 'edge', 'firefox', 'safari', 'brave', 'coccoc', 'opera', 
-        'calc', 'calculator', 'paint', 'notepad', 'notes', 'canva', 'figma', 'photoshop', 
-        'gimp', 'audacity', 'vlc', 'terminal', 'cmd', 'calendar', 'clock'
-    ]
-    if any(k in nl for k in utility_keywords):
-        return {
-            'category': 'Công cụ & Tiện ích',
-            'tag': 'UTILITY',
-            'icon': '🛠️',
-            'badge_color': 'bg-amber-100 text-amber-800 border-amber-300',
-            'default_limit': 60,
-            'is_educational': False
-        }
-
-    # 5. Ứng dụng khác (OTHER)
-    return {
-        'category': 'Ứng dụng khác',
-        'tag': 'OTHER',
-        'icon': '💻',
-        'badge_color': 'bg-slate-100 text-slate-800 border-slate-300',
-        'default_limit': 60,
-        'is_educational': False
-    }
-
-def format_duration(minutes: int) -> str:
-    if minutes < 60:
-        return f"{minutes} phút"
-    hours = minutes // 60
-    rem = minutes % 60
-    return f"{hours} giờ {rem} phút" if rem else f"{hours} giờ"
-
-def format_remaining(limit_mins: int, used_mins: int) -> tuple[int, str, bool]:
-    if limit_mins <= 0:
-        return (9999, "Không giới hạn", False)
-    rem = limit_mins - used_mins
-    if rem <= 0:
-        return (0, "Đã hết giờ (0 phút)", True)
-    return (rem, f"Còn {format_duration(rem)}", False)
-
-def is_within_curfew(bedtime_str: str, wakeup_str: str, now: datetime = None) -> bool:
-    """Kiểm tra thời điểm hiện tại có nằm trong khung giờ giới nghiêm (sau bedtime đến wakeup sáng) hay không."""
-    if not bedtime_str or not wakeup_str:
-        return False
-    if now is None:
-        now = datetime.now()
-    try:
-        from datetime import time as dtime
-        b_hour, b_min = map(int, bedtime_str.split(":"))
-        w_hour, w_min = map(int, wakeup_str.split(":"))
-        now_time = now.time()
-        b_time = dtime(b_hour, b_min)
-        w_time = dtime(w_hour, w_min)
-
-        if b_time > w_time:
-            # Ví dụ: 22:00 tối đến 06:00 sáng hôm sau
-            # Bị khóa nếu >= 22:00 HOẶC < 06:00
-            return now_time >= b_time or now_time < w_time
-        elif b_time < w_time:
-            # Khung giờ trong cùng 1 ngày
-            return b_time <= now_time < w_time
-        else:
-            return False
-    except Exception:
-        return False
-
-# ==========================================
 # QUẢN LÝ KẾT NỐI WEBSOCKET THỜI GIAN THỰC
 # ==========================================
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: dict[WebSocket, str] = {}
 
-    async def connect(self, device_id: str, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections[websocket] = device_id
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            del self.active_connections[websocket]
-
-    async def broadcast_text(self, message: str, sender_ws: WebSocket = None):
-        dead_connections = []
-        for ws in list(self.active_connections.keys()):
-            if ws != sender_ws:
-                try:
-                    await ws.send_text(message)
-                except Exception:
-                    dead_connections.append(ws)
-        for ws in dead_connections:
-            self.disconnect(ws)
-
-    async def broadcast_json(self, data: dict, sender_ws: WebSocket = None):
-        msg = json.dumps(data)
-        await self.broadcast_text(msg, sender_ws=sender_ws)
-
-manager = ConnectionManager()
 
 @app.websocket("/ws/agent/{device_id}")
 async def websocket_endpoint(websocket: WebSocket, device_id: str):
-    await manager.connect(device_id, websocket)
+    if not security.same_origin(websocket):
+        await websocket.close(code=1008)
+        return
+    if device_id == "parent_dashboard" and security.parent_session(websocket):
+        channel = "parent_dashboard"
+    elif device_id == "child_pc_01" and (device := security.resolve_device(websocket, child_only=True)):
+        channel = device.device_hwid
+    else:
+        await websocket.close(code=1008)
+        return
+    await manager.connect(channel, websocket)
     try:
         while True:
-            data = await websocket.receive_text()
-            
-            parsed_json = None
-            msg_type = ""
-            try:
-                parsed_json = json.loads(data)
-                msg_type = parsed_json.get("type", "")
-            except Exception:
-                pass
-
-            if "LOCK_MACHINE" in data or msg_type == "LOCK_MACHINE":
-                await manager.broadcast_json({
-                    "type": "LOCK_MACHINE",
-                    "sender": device_id,
-                    "message": "🔒 Máy tính đã bị khóa bởi Phụ huynh!"
-                }, sender_ws=websocket)
-            elif "UNLOCK_MACHINE" in data or msg_type == "UNLOCK_MACHINE":
-                await manager.broadcast_json({
-                    "type": "UNLOCK_MACHINE",
-                    "sender": device_id,
-                    "message": "🔓 Máy tính đã được mở khóa bởi Phụ huynh!"
-                }, sender_ws=websocket)
-            elif msg_type == "PARENT_MESSAGE":
-                await manager.broadcast_json({
-                    "type": "PARENT_MESSAGE",
-                    "sender": device_id,
-                    "message": parsed_json.get("message", "")
-                }, sender_ws=websocket)
-            elif msg_type == "UNAPPROVED_ATTEMPT":
-                await manager.broadcast_json({
-                    "type": "UNAPPROVED_ATTEMPT",
-                    "sender": device_id,
-                    "app_name": parsed_json.get("app_name", ""),
-                    "message": parsed_json.get("message", "Con vừa cố mở phần mềm/web chưa được cho phép.")
-                }, sender_ws=websocket)
-            else:
-                await manager.broadcast_text(data, sender_ws=websocket)
-                
+            await websocket.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
         manager.disconnect(websocket)
 
 # ==========================================
@@ -442,277 +430,19 @@ async def remote_message(payload: dict):
     })
     return {"status": "success", "message": "Đã gửi thông điệp tới máy con!"}
 
-# ==========================================
-# 0.1. QUẢN LÝ THIẾT BỊ, GHÉP NỐI & CLOUD RELAY (WAN SYNC)
-# ==========================================
-def generate_pairing_code() -> str:
-    """Tạo mã ghép nối ngẫu nhiên 6 ký tự dễ đọc (VD: MMT-8942)."""
-    digits = ''.join(random.choices(string.digits, k=4))
-    return f"MMT-{digits}"
 
-@app.post("/devices/create", response_model=schemas.DeviceResponse)
-async def create_device_profile(dev_data: schemas.DeviceCreateRequest, db: Session = Depends(database.get_db)):
-    """Phụ huynh tạo hồ sơ thiết bị cho con và thiết lập quy tắc ban đầu."""
-    # Sinh mã ghép nối duy nhất
-    code = generate_pairing_code()
-    for _ in range(10):
-        if not db.query(models.Device).filter(models.Device.pairing_code == code).first():
-            break
-        code = generate_pairing_code()
+####    API 
 
-    new_dev = models.Device(
-        device_name=dev_data.device_name.strip(),
-        pairing_code=code,
-        child_profile_id=dev_data.child_profile_id,
-        status="PENDING_PAIR",
-        is_paired=False,
-        anti_tamper_active=True,
-        content_filter_active=True
-    )
-    db.add(new_dev)
-    db.commit()
-    db.refresh(new_dev)
+from .routers import devices, relay 
 
-    # Thêm các quy tắc web/game chặn ban đầu nếu phụ huynh chọn
-    if dev_data.blocked_items:
-        for item in dev_data.blocked_items:
-            clean = extract_target_name(item)
-            if clean:
-                r_type = "WEBSITE" if "." in clean else "APP"
-                existing = db.query(models.AppWebRule).filter(models.AppWebRule.target_value == clean).first()
-                if not existing:
-                    db.add(models.AppWebRule(
-                        device_id=new_dev.id,
-                        rule_type=r_type,
-                        target_value=clean,
-                        action="BLOCK",
-                        time_limit_minutes=30,
-                        used_minutes=0
-                    ))
-        db.commit()
+app.include_router(devices.router)
 
-    # Cập nhật hạn mức cho hồ sơ con nếu có
-    if dev_data.child_profile_id:
-        child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev_data.child_profile_id).first()
-        if child and dev_data.daily_limit_minutes:
-            child.daily_limit_minutes = dev_data.daily_limit_minutes
-            db.commit()
+app.include_router(relay.router)
 
-    child_name = None
-    if new_dev.child_profile_id:
-        c = db.query(models.ChildProfile).filter(models.ChildProfile.id == new_dev.child_profile_id).first()
-        if c: child_name = c.name
+######
 
-    await manager.broadcast_json({
-        "type": "DEVICE_CREATED",
-        "device_id": new_dev.id,
-        "device_name": new_dev.device_name,
-        "pairing_code": new_dev.pairing_code
-    })
 
-    return schemas.DeviceResponse(
-        id=new_dev.id,
-        device_name=new_dev.device_name,
-        device_hwid=new_dev.device_hwid,
-        pairing_code=new_dev.pairing_code,
-        is_paired=new_dev.is_paired,
-        status=new_dev.status,
-        child_profile_id=new_dev.child_profile_id,
-        child_name=child_name,
-        platform=new_dev.platform,
-        anti_tamper_active=new_dev.anti_tamper_active,
-        content_filter_active=new_dev.content_filter_active,
-        last_seen=new_dev.last_seen,
-        created_at=new_dev.created_at
-    )
 
-@app.post("/devices/pair", response_model=schemas.DeviceConfigResponse)
-async def pair_device(pair_data: schemas.DevicePairRequest, db: Session = Depends(database.get_db)):
-    """Agent trên máy con gửi mã phần cứng (device_hwid) và mã pairing_code để liên kết và tải cấu hình gốc."""
-    code = pair_data.pairing_code.strip().upper()
-    dev = db.query(models.Device).filter(
-        func.upper(models.Device.pairing_code) == code
-    ).first()
-
-    if not dev:
-        raise HTTPException(status_code=404, detail="Mã ghép nối không hợp lệ hoặc đã hết hạn.")
-
-    dev.device_hwid = pair_data.device_hwid
-    dev.is_paired = True
-    dev.status = "ONLINE_WAN"
-    dev.platform = pair_data.platform or "Linux"
-    if pair_data.ip_address:
-        dev.ip_address = pair_data.ip_address
-    dev.last_seen = datetime.utcnow()
-    dev.pairing_token = str(uuid.uuid4())
-    db.commit()
-    db.refresh(dev)
-
-    # Lấy thông tin cấu hình của phụ huynh
-    child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev.child_profile_id).first() if dev.child_profile_id else None
-    daily_limit = child.daily_limit_minutes if child else 120
-    child_name = child.name if child else "Bé An"
-
-    time_limit = db.query(models.TimeLimit).first()
-    bedtime = time_limit.bedtime if time_limit and time_limit.bedtime else "22:00"
-    wakeup = time_limit.wakeup_time if time_limit and time_limit.wakeup_time else "06:00"
-
-    rules = db.query(models.AppWebRule).all()
-    allowed = [r.target_value for r in rules if r.action == "ALLOW"]
-    blocked = [r.target_value for r in rules if r.action == "BLOCK"]
-
-    await manager.broadcast_json({
-        "type": "DEVICE_PAIRED",
-        "device_id": dev.id,
-        "device_name": dev.device_name,
-        "device_hwid": dev.device_hwid,
-        "child_name": child_name,
-        "platform": dev.platform
-    })
-
-    return schemas.DeviceConfigResponse(
-        device_hwid=dev.device_hwid,
-        device_name=dev.device_name,
-        child_name=child_name,
-        daily_limit_minutes=daily_limit,
-        bedtime=bedtime,
-        wakeup_time=wakeup,
-        allowed_rules=allowed,
-        blocked_rules=blocked,
-        anti_tamper_enabled=dev.anti_tamper_active,
-        content_filter_enabled=dev.content_filter_active,
-        admin_password_hash=hashlib.sha256("admin123".encode()).hexdigest()
-    )
-
-@app.get("/devices/", response_model=List[schemas.DeviceResponse])
-def get_devices(db: Session = Depends(database.get_db)):
-    """Lấy danh sách các thiết bị máy con đã đăng ký hoặc đang quản lý."""
-    devices = db.query(models.Device).order_by(models.Device.created_at.desc()).all()
-    results = []
-    for d in devices:
-        c_name = None
-        if d.child_profile_id:
-            c = db.query(models.ChildProfile).filter(models.ChildProfile.id == d.child_profile_id).first()
-            if c: c_name = c.name
-        
-        # Cập nhật trạng thái
-        current_status = d.status
-        if d.device_hwid and (d.device_hwid in manager.active_connections or d.id in manager.active_connections):
-            current_status = "ONLINE_WAN"
-        elif not d.is_paired:
-            current_status = "PENDING_PAIR"
-            
-        results.append(schemas.DeviceResponse(
-            id=d.id,
-            device_name=d.device_name,
-            device_hwid=d.device_hwid,
-            pairing_code=d.pairing_code,
-            is_paired=d.is_paired,
-            status=current_status,
-            child_profile_id=d.child_profile_id,
-            child_name=c_name,
-            platform=d.platform,
-            anti_tamper_active=d.anti_tamper_active,
-            content_filter_active=d.content_filter_active,
-            last_seen=d.last_seen,
-            created_at=d.created_at
-        ))
-    return results
-
-@app.get("/devices/{hwid}/config", response_model=schemas.DeviceConfigResponse)
-def get_device_config(hwid: str, db: Session = Depends(database.get_db)):
-    """Agent định kỳ tải cấu hình cập nhật từ phụ huynh."""
-    dev = db.query(models.Device).filter(models.Device.device_hwid == hwid).first()
-    if not dev:
-        dev = db.query(models.Device).filter(models.Device.id == hwid).first()
-    if not dev:
-        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
-
-    dev.last_seen = datetime.utcnow()
-    db.commit()
-
-    child = db.query(models.ChildProfile).filter(models.ChildProfile.id == dev.child_profile_id).first() if dev.child_profile_id else None
-    daily_limit = child.daily_limit_minutes if child else 120
-    child_name = child.name if child else "Bé An"
-
-    time_limit = db.query(models.TimeLimit).first()
-    bedtime = time_limit.bedtime if time_limit and time_limit.bedtime else "22:00"
-    wakeup = time_limit.wakeup_time if time_limit and time_limit.wakeup_time else "06:00"
-
-    rules = db.query(models.AppWebRule).all()
-    allowed = [r.target_value for r in rules if r.action == "ALLOW"]
-    blocked = [r.target_value for r in rules if r.action == "BLOCK"]
-
-    return schemas.DeviceConfigResponse(
-        device_hwid=dev.device_hwid or hwid,
-        device_name=dev.device_name,
-        child_name=child_name,
-        daily_limit_minutes=daily_limit,
-        bedtime=bedtime,
-        wakeup_time=wakeup,
-        allowed_rules=allowed,
-        blocked_rules=blocked,
-        anti_tamper_enabled=dev.anti_tamper_active,
-        content_filter_enabled=dev.content_filter_active,
-        admin_password_hash=hashlib.sha256("admin123".encode()).hexdigest()
-    )
-
-@app.delete("/devices/{device_id}")
-def delete_device(device_id: str, db: Session = Depends(database.get_db)):
-    """Hủy liên kết và xóa thiết bị."""
-    dev = db.query(models.Device).filter(models.Device.id == device_id).first()
-    if not dev:
-        dev = db.query(models.Device).filter(models.Device.device_hwid == device_id).first()
-    if not dev:
-        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
-    db.delete(dev)
-    db.commit()
-    return {"status": "success", "message": "Đã xóa thiết bị thành công"}
-
-@app.websocket("/ws/relay/{device_hwid}")
-async def cloud_relay_endpoint(websocket: WebSocket, device_hwid: str):
-    """Kênh WebSocket Cloud Relay dành cho máy con kết nối từ xa qua WAN (Bỏ qua NAT/Firewall)."""
-    await manager.connect(device_hwid, websocket)
-    try:
-        await manager.broadcast_json({
-            "type": "DEVICE_CONNECTED_WAN",
-            "device_hwid": device_hwid,
-            "message": f"Thiết bị {device_hwid} đã kết nối từ xa qua Cloud Relay thành công!"
-        })
-        while True:
-            data = await websocket.receive_text()
-            try:
-                msg = json.loads(data)
-                mtype = msg.get("type", "")
-                if mtype == "PING":
-                    await websocket.send_text(json.dumps({"type": "PONG", "timestamp": time.time()}))
-                    continue
-                await manager.broadcast_json(msg, sender_ws=websocket)
-            except Exception:
-                await manager.broadcast_text(data, sender_ws=websocket)
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        await manager.broadcast_json({
-            "type": "DEVICE_DISCONNECTED_WAN",
-            "device_hwid": device_hwid
-        })
-
-@app.post("/relay/command")
-async def send_relay_command(payload: dict):
-    """Gửi lệnh điều khiển từ xa qua Cloud Relay tới máy con qua WAN."""
-    target_hwid = payload.get("target_hwid")
-    action = payload.get("action", "MESSAGE")
-    data = payload.get("data", {})
-
-    msg = {
-        "type": action,
-        "target_hwid": target_hwid,
-        "sender": "parent_cloud",
-        "data": data,
-        "timestamp": time.time()
-    }
-    await manager.broadcast_json(msg)
-    return {"status": "success", "message": f"Đã gửi lệnh {action} qua Cloud Relay tới {target_hwid or 'tất cả thiết bị'}"}
 
 @app.post("/ai/content-check", response_model=schemas.ContentFilterResult)
 def api_content_check(req: schemas.ContentFilterAnalysisRequest):
@@ -747,20 +477,13 @@ def get_onboarding_config(db: Session = Depends(database.get_db)):
     allowed = [r.target_value for r in rules if r.action == "ALLOW"]
     blocked = [r.target_value for r in rules if r.action == "BLOCK"]
 
-    tasks = db.query(models.Task).all()
-    initial_tasks = [
-        {"title": t.title, "description": t.description, "reward_minutes": t.reward_minutes}
-        for t in tasks
-    ]
-
     return {
         "learning_limit_minutes": learn_limit.daily_limit_minutes if learn_limit else 180,
         "entertainment_limit_minutes": ent_limit.daily_limit_minutes if ent_limit else 45,
         "bedtime": learn_limit.bedtime if learn_limit else "22:00",
         "wakeup_time": learn_limit.wakeup_time if learn_limit and learn_limit.wakeup_time else "06:00",
         "allowed_sites": allowed or [],
-        "blocked_sites": blocked or ["youtube.com", "facebook.com", "discord.com", "tiktok.com"],
-        "initial_tasks": initial_tasks or []
+        "blocked_sites": blocked or ["youtube.com", "facebook.com", "discord.com", "tiktok.com"]
     }
 
 @app.post("/onboarding/setup")
@@ -809,18 +532,6 @@ async def save_onboarding_setup(config: schemas.OnboardingSetupRequest, db: Sess
             r_type = "WEBSITE" if "." in clean else "APP"
             db.add(models.AppWebRule(rule_type=r_type, target_value=clean, action="BLOCK", time_limit_minutes=config.entertainment_limit_minutes, used_minutes=0))
 
-    # Cập nhật danh sách việc tốt ban đầu (initial_tasks) nếu có
-    if config.initial_tasks is not None and len(config.initial_tasks) > 0:
-        db.query(models.Task).delete()
-        for t in config.initial_tasks:
-            if t.title and t.title.strip():
-                db.add(models.Task(
-                    title=t.title.strip(),
-                    description=t.description or "Nhiệm vụ hàng ngày",
-                    reward_minutes=t.reward_minutes or 15,
-                    status="TODO"
-                ))
-
     db.commit()
 
     await manager.broadcast_json({
@@ -831,117 +542,47 @@ async def save_onboarding_setup(config: schemas.OnboardingSetupRequest, db: Sess
     return {"status": "success", "message": "Đã lưu cấu hình gốc thành công!"}
 
 # ==========================================
-# 2. GAMIFICATION: ĐỔI VIỆC TỐT LẤY GIỜ CHƠI
-# ==========================================
-@app.get("/tasks/", response_model=List[schemas.TaskResponse])
-def get_tasks(db: Session = Depends(database.get_db)):
-    """Lấy danh sách việc tốt / bài tập nhận thưởng. Mặc định trống, phụ huynh tự thêm."""
-    return db.query(models.Task).order_by(models.Task.id.desc()).all()
-
-@app.post("/tasks/", status_code=201, response_model=schemas.TaskResponse)
-async def create_task(task_data: schemas.TaskCreate, db: Session = Depends(database.get_db)):
-    """Phụ huynh tạo việc tốt / bài tập mới."""
-    new_task = models.Task(
-        title=task_data.title.strip(),
-        description=task_data.description,
-        reward_minutes=task_data.reward_minutes,
-        status="TODO"
-    )
-    db.add(new_task)
-    db.commit()
-    db.refresh(new_task)
-
-    await manager.broadcast_json({
-        "type": "NEW_TASK",
-        "title": new_task.title,
-        "reward_minutes": new_task.reward_minutes
-    })
-    return new_task
-
-@app.patch("/tasks/{task_id}/complete", response_model=schemas.TaskResponse)
-async def complete_task(task_id: int, db: Session = Depends(database.get_db)):
-    """Trẻ em báo cáo đã hoàn thành việc tốt."""
-    task = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Không tìm thấy việc tốt")
-    
-    task.status = "COMPLETED_WAITING_APPROVAL"
-    db.commit()
-    db.refresh(task)
-
-    await manager.broadcast_json({
-        "type": "TASK_WAITING_APPROVAL",
-        "task_id": task.id,
-        "title": task.title,
-        "reward_minutes": task.reward_minutes
-    })
-    return task
-
-@app.patch("/tasks/{task_id}/approve", response_model=schemas.TaskResponse)
-async def approve_task(task_id: int, db: Session = Depends(database.get_db)):
-    """Phụ huynh duyệt và thưởng thêm phút sử dụng cho con."""
-    task = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Không tìm thấy việc tốt")
-    
-    task.status = "APPROVED"
-    
-    # Tự động cộng thưởng số phút vào quy tắc hoặc giảm used_minutes
-    for rule in db.query(models.AppWebRule).filter(models.AppWebRule.action == "ALLOW").all():
-        rule.time_limit_minutes = (rule.time_limit_minutes or 60) + task.reward_minutes
-
-    db.commit()
-    db.refresh(task)
-
-    await manager.broadcast_json({
-        "type": "TASK_APPROVED_REWARD",
-        "task_id": task.id,
-        "title": task.title,
-        "reward_minutes": task.reward_minutes,
-        "message": f"🎉 Chúc mừng con! Cha mẹ đã duyệt '{task.title}' và thưởng thêm +{task.reward_minutes} phút!"
-    })
-    return task
-
-@app.delete("/tasks/{task_id}")
-def delete_task(task_id: int, db: Session = Depends(database.get_db)):
-    """Xóa một nhiệm vụ / việc tốt."""
-    task = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Không tìm thấy việc tốt")
-    db.delete(task)
-    db.commit()
-    return {"status": "success", "message": "Đã xóa việc tốt thành công"}
-
-# ==========================================
 # 3. QUẢN LÝ THIẾT BỊ VÀ TELEMETRY (NT2)
 # ==========================================
+def device_rules(db, device):
+    query = db.query(models.AppWebRule)
+    if device:
+        query = query.filter(
+            models.AppWebRule.device_id.is_(None) | (models.AppWebRule.device_id == device.id)
+        ).order_by(models.AppWebRule.device_id.is_not(None).desc())
+    return query
+
+
+def owned_rows(query, model, device):
+    return query.filter(model.device_id == device.id) if device else query
+
+
 @app.post("/telemetry/", status_code=201)
-def receive_telemetry(data: schemas.TelemetryCreate, db: Session = Depends(database.get_db)):
+def receive_telemetry(data: schemas.TelemetryCreate, request: Request, db: Session = Depends(database.get_db)):
     """Nhận siêu dữ liệu thời lượng hoạt động từ Agent hoặc Web tracker."""
-    check_and_perform_daily_reset(db)
     clean_target = extract_target_name(data.app_name) or data.app_name
     if is_system_process(clean_target):
         return {"status": "ignored", "message": "Tiến trình hệ thống bị bỏ qua."}
         
+    device = client_device(request)
     db_log = models.MinimalTelemetryLog(
+        device_id=device.id if device else None,
         app_name=clean_target,
         domain=data.domain,
         duration_seconds=data.duration_seconds
     )
     db.add(db_log)
-    db.commit()
+    db.flush()
 
     # Đồng bộ used_minutes cho quy tắc (nếu có)
-    target_total_sec = db.query(func.sum(models.MinimalTelemetryLog.duration_seconds)).filter(
-        models.MinimalTelemetryLog.app_name.ilike(f"%{clean_target}%")
-    ).scalar() or 0
-
-    matched_rule = db.query(models.AppWebRule).filter(
-        models.AppWebRule.target_value.ilike(f"%{clean_target}%") | (models.AppWebRule.target_value == clean_target)
-    ).first()
-    if matched_rule:
-        matched_rule.used_minutes = target_total_sec // 60 if target_total_sec >= 60 else (1 if target_total_sec > 0 else 0)
-        db.commit()
+    if not device:  # Keep the legacy aggregate counter for parent-originated telemetry.
+        target_total_sec = db.query(func.sum(models.MinimalTelemetryLog.duration_seconds)).filter(
+            models.MinimalTelemetryLog.app_name == clean_target
+        ).scalar() or 0
+        matched_rule = db.query(models.AppWebRule).filter_by(target_value=clean_target).first()
+        if matched_rule:
+            matched_rule.used_minutes = target_total_sec // 60
+    db.commit()
 
     return {"status": "success", "message": "Telemetry logged safely.", "target": clean_target}
 
@@ -949,8 +590,9 @@ def receive_telemetry(data: schemas.TelemetryCreate, db: Session = Depends(datab
 # 3.1. KIỂM TRA QUYỀN TRUY CẬP VÀ GÁN NHÃN AI
 # ==========================================
 @app.post("/check-permission/")
-def check_permission(payload: dict, db: Session = Depends(database.get_db)):
+def check_permission(payload: dict, request: Request, db: Session = Depends(database.get_db)):
     """Kiểm tra một web/app có được phép hay không, đồng thời gán nhãn AI và trả về hạn mức."""
+    device = client_device(request)
     raw_target = payload.get("target", "")
     target = extract_target_name(raw_target)
     if not target:
@@ -972,9 +614,10 @@ def check_permission(payload: dict, db: Session = Depends(database.get_db)):
         }
 
     # 2. Kiểm tra hạn mức chung hôm nay của trẻ
-    active_child = db.query(models.ChildProfile).filter(models.ChildProfile.is_active == True).first()
+    active_child = db.get(models.ChildProfile, device.child_profile_id) if device else None
     child_limit = active_child.daily_limit_minutes if active_child and active_child.daily_limit_minutes else 120
-    db_total_sec = db.query(func.sum(models.MinimalTelemetryLog.duration_seconds)).scalar() or 0
+    telemetry = owned_rows(db.query(func.sum(models.MinimalTelemetryLog.duration_seconds)), models.MinimalTelemetryLog, device)
+    db_total_sec = telemetry.scalar() or 0
     total_mins = db_total_sec // 60
     if total_mins >= child_limit and child_limit > 0:
         return {
@@ -986,7 +629,7 @@ def check_permission(payload: dict, db: Session = Depends(database.get_db)):
         }
 
     # 3. Kiểm tra quy tắc cụ thể trong Database
-    matched_rule = db.query(models.AppWebRule).filter(
+    matched_rule = device_rules(db, device).filter(
         models.AppWebRule.target_value.ilike(f"%{target}%") | (models.AppWebRule.target_value == target)
     ).first()
 
@@ -1000,7 +643,8 @@ def check_permission(payload: dict, db: Session = Depends(database.get_db)):
             }
         
         limit_m = matched_rule.time_limit_minutes or 60
-        used_m = matched_rule.used_minutes or 0
+        used_m = (telemetry.filter(models.MinimalTelemetryLog.app_name == matched_rule.target_value)
+                  .scalar() or 0) // 60
         if limit_m > 0 and used_m >= limit_m:
             return {
                 "allowed": False,
@@ -1048,7 +692,7 @@ def api_classify(payload: dict):
 # 4. XIN PHÉP & PHÊ DUYỆT (NT3 & NT5)
 # ==========================================
 @app.post("/requests/", status_code=201, response_model=schemas.ChildRequestResponse)
-async def create_child_request(req: schemas.ChildRequestCreate, db: Session = Depends(database.get_db)):
+async def create_child_request(req: schemas.ChildRequestCreate, request: Request, db: Session = Depends(database.get_db)):
     """Gửi yêu cầu xin phép mở Web/Phần mềm hoặc xin thêm giờ."""
     clean_target = extract_target_name(req.target_detail or "")
     tags_info = []
@@ -1061,7 +705,9 @@ async def create_child_request(req: schemas.ChildRequestCreate, db: Session = De
     if tags_info:
         detail = f"{clean_target} [{' | '.join(tags_info)}]"
 
+    device = client_device(request)
     db_req = models.ChildRequest(
+        device_id=device.id if device else None,
         request_type=req.request_type,
         target_detail=detail,
         reason_from_child=req.reason_from_child,
@@ -1073,7 +719,7 @@ async def create_child_request(req: schemas.ChildRequestCreate, db: Session = De
     db.refresh(db_req)
 
     created_at_str = db_req.created_at.strftime("%Y-%m-%d %H:%M:%S") if db_req.created_at else ""
-    await manager.broadcast_json({
+    await manager.send_to_device("parent_dashboard", {
         "type": "NEW_REQUEST",
         "data": {
             "id": db_req.id,
@@ -1089,9 +735,18 @@ async def create_child_request(req: schemas.ChildRequestCreate, db: Session = De
     return db_req
 
 @app.get("/requests/", response_model=List[schemas.ChildRequestResponse])
-def get_child_requests(db: Session = Depends(database.get_db)):
+def get_child_requests(request: Request, db: Session = Depends(database.get_db)):
     """Xem lại toàn bộ lịch sử yêu cầu và phản hồi."""
-    return db.query(models.ChildRequest).order_by(models.ChildRequest.id.desc()).all()
+    device = client_device(request)
+    query = db.query(models.ChildRequest).order_by(models.ChildRequest.id.desc())
+    if device:
+        return owned_rows(query, models.ChildRequest, device).all()
+    return [
+        schemas.ChildRequestResponse.model_validate(record).model_copy(update={"child_name": name})
+        for record, name in query.add_columns(models.ChildProfile.name).outerjoin(
+            models.Device, models.ChildRequest.device_id == models.Device.id
+        ).outerjoin(models.ChildProfile, models.Device.child_profile_id == models.ChildProfile.id).all()
+    ]
 
 @app.patch("/requests/{request_id}", response_model=schemas.ChildRequestResponse)
 async def update_child_request(
@@ -1104,6 +759,8 @@ async def update_child_request(
     if not req:
         raise HTTPException(status_code=404, detail="Không tìm thấy yêu cầu")
 
+    if req.status != "PENDING":
+        raise HTTPException(409, "Yêu cầu này đã được xử lý hoặc hết hạn.")
     req.status = action.status
     if action.parent_feedback is not None:
         req.parent_feedback = action.parent_feedback
@@ -1125,37 +782,27 @@ async def update_child_request(
         except Exception:
             pass
 
+    device = db.get(models.Device, req.device_id) if req.device_id else None
     if action.status == "APPROVED":
         if "TIME" in req.request_type:
             # Thêm thời gian vào hồ sơ con đang hoạt động
-            active_child = db.query(models.ChildProfile).filter(models.ChildProfile.is_active == True).first()
+            active_child = db.get(models.ChildProfile, device.child_profile_id) if device else None
             if active_child:
                 active_child.daily_limit_minutes = (active_child.daily_limit_minutes or 120) + limit_mins
             
-            # Cập nhật thêm hạn mức cho các quy tắc thuộc nhãn tương ứng (Học tập, Giải trí, Mạng xã hội)
-            target_tag = "LEARNING"
-            if req.target_detail:
-                if "Giải trí" in req.target_detail:
-                    target_tag = "ENTERTAINMENT"
-                elif "Mạng xã hội" in req.target_detail:
-                    target_tag = "SOCIAL"
-            
-            for rule in db.query(models.AppWebRule).filter(models.AppWebRule.action == "ALLOW").all():
-                r_info = classify_item(rule.target_value)
-                if r_info.get("tag") == target_tag:
-                    rule.time_limit_minutes = (rule.time_limit_minutes or 60) + limit_mins
-
         elif any(k in req.request_type for k in ["PERMISSION", "UNLOCK"]):
             rule_type = "WEBSITE" if any(w in req.request_type for w in ["WEB", "WEBSITE"]) else "APP"
             
             existing = db.query(models.AppWebRule).filter(
-                models.AppWebRule.target_value == clean_target
+                models.AppWebRule.target_value == clean_target,
+                models.AppWebRule.device_id == req.device_id,
             ).first()
             if existing:
                 existing.action = "ALLOW"
                 existing.time_limit_minutes = max(existing.time_limit_minutes or 60, limit_mins)
             else:
                 new_rule = models.AppWebRule(
+                    device_id=req.device_id,
                     rule_type=rule_type,
                     target_value=clean_target,
                     action="ALLOW",
@@ -1167,7 +814,7 @@ async def update_child_request(
     db.commit()
     db.refresh(req)
 
-    await manager.broadcast_json({
+    event = {
         "type": "REQUEST_DECIDED",
         "data": {
             "id": req.id,
@@ -1178,14 +825,17 @@ async def update_child_request(
             "parent_feedback": req.parent_feedback,
             "time_limit_minutes": limit_mins
         }
-    })
+    }
+    await manager.send_to_device("parent_dashboard", event)
+    if device and device.device_hwid:
+        await manager.send_to_device(device.device_hwid, event)
     return req
 
 # ==========================================
 # 5. QUẢN LÝ QUY TẮC & GIỚI HẠN THỜI GIAN
 # ==========================================
 @app.get("/rules/", response_model=List[schemas.AppWebRuleResponse])
-def get_rules(db: Session = Depends(database.get_db)):
+def get_rules(request: Request, db: Session = Depends(database.get_db)):
     """Lấy danh sách các trang web / ứng dụng kèm thời gian giới hạn và thời gian còn lại."""
     count = db.query(models.AppWebRule).count()
     if count == 0:
@@ -1198,11 +848,21 @@ def get_rules(db: Session = Depends(database.get_db)):
         db.add_all(default_rules)
         db.commit()
 
-    rules = db.query(models.AppWebRule).all()
+    device = client_device(request)
+    rules = device_rules(db, device).all()
+    usage = {}
+    if device:
+        usage = dict(db.query(
+            models.MinimalTelemetryLog.app_name, func.sum(models.MinimalTelemetryLog.duration_seconds)
+        ).filter_by(device_id=device.id).group_by(models.MinimalTelemetryLog.app_name).all())
+    seen = set()
     results = []
     for r in rules:
+        if device and r.target_value in seen:
+            continue
+        seen.add(r.target_value)
         limit_m = r.time_limit_minutes if r.time_limit_minutes is not None else 60
-        used_m = r.used_minutes or 0
+        used_m = usage.get(r.target_value, 0) // 60 if device else (r.used_minutes or 0)
         rem_m, rem_str, expired = format_remaining(limit_m, used_m)
         results.append(schemas.AppWebRuleResponse(
             id=r.id,
@@ -1312,14 +972,18 @@ def delete_rule(rule_id: str, db: Session = Depends(database.get_db)):
 # ==========================================
 # 6. CÁC TÍNH NĂNG RESET DÀNH CHO PHỤ HUYNH
 # ==========================================
+@app.post("/reset/daily", include_in_schema=False)
+async def reset_daily(db: Session = Depends(database.get_db)):
+    perform_daily_reset(db)
+    await notify_daily_reset()
+    return {"status": "success", "message": "Đã đặt lại thời gian sử dụng về 0."}
+
+
 @app.post("/reset/usage")
 async def reset_usage_time(db: Session = Depends(database.get_db)):
-    """Reset toàn bộ thời gian sử dụng hôm nay về 0."""
-    db.query(models.MinimalTelemetryLog).delete()
-    for r in db.query(models.AppWebRule).all():
-        r.used_minutes = 0
+    """Reset toàn bộ thời gian sử dụng hôm nay về 0 (Thủ công từ Phụ huynh)."""
+    clear_usage(db)
     db.commit()
-
     await manager.broadcast_json({
         "type": "USAGE_RESET",
         "message": "Phụ huynh đã đặt lại toàn bộ thời gian sử dụng hôm nay về 0."
@@ -1357,22 +1021,6 @@ async def reset_requests(db: Session = Depends(database.get_db)):
     })
     return {"status": "success", "message": "Đã làm sạch lịch sử yêu cầu."}
 
-@app.post("/reset/daily")
-async def trigger_daily_reset(db: Session = Depends(database.get_db)):
-    """Tự động hoặc chủ động kích hoạt reset sang ngày mới: thời gian về 0, việc tốt về TODO."""
-    for rule in db.query(models.AppWebRule).all():
-        rule.used_minutes = 0
-    for task in db.query(models.Task).all():
-        task.status = "TODO"
-    db.query(models.MinimalTelemetryLog).delete()
-    db.commit()
-
-    await manager.broadcast_json({
-        "type": "DAILY_RESET_TRIGGERED",
-        "message": "🌅 Đã thực hiện reset ngày mới: Thời gian sử dụng về 0 và danh sách việc tốt đã được làm mới!"
-    })
-    return {"status": "success", "message": "Đã reset toàn bộ cho ngày mới!"}
-
 @app.post("/reset/all")
 async def reset_all_system(db: Session = Depends(database.get_db)):
     """Khôi phục cài đặt gốc toàn diện cho hệ thống."""
@@ -1398,10 +1046,18 @@ async def reset_all_system(db: Session = Depends(database.get_db)):
 # 7. THỐNG KÊ THỜI GIAN SỬ DỤNG, GIỜ GIỚI NGHIÊM & THỜI GIAN CÒN LẠI
 # ==========================================
 @app.get("/usage-stats/", response_model=schemas.UsageStatsResponse)
-def get_usage_stats(db: Session = Depends(database.get_db)):
+def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Session = Depends(database.get_db)):
     """Trả về thống kê thời gian sử dụng, thời gian giới hạn và thời gian còn lại."""
-    check_and_perform_daily_reset(db)
     
+    device = client_device(request)
+    selected_child = None
+    if not device and child_id is not None:
+        selected_child = db.get(models.ChildProfile, child_id)
+        if selected_child is None:
+            raise HTTPException(404, "Không tìm thấy hồ sơ trẻ.")
+        device = db.query(models.Device).filter_by(child_profile_id=child_id).first()
+    if device:
+        selected_child = db.get(models.ChildProfile, device.child_profile_id)
     # Kiểm tra giờ giới nghiêm (Bedtime Mode: Vô hiệu hóa sau bedtime_str đến wakeup_str sáng)
     time_limit_record = db.query(models.TimeLimit).first()
     bedtime_str = time_limit_record.bedtime if time_limit_record and time_limit_record.bedtime else "22:00"
@@ -1412,10 +1068,14 @@ def get_usage_stats(db: Session = Depends(database.get_db)):
     # Chỉ thống kê dữ liệu thực tế từ telemetry (AI gán nhãn phân loại)
     real_usage_sec_map = {}
 
-    db_logs = db.query(
+    logs = db.query(
         models.MinimalTelemetryLog.app_name,
         func.sum(models.MinimalTelemetryLog.duration_seconds).label("total_sec")
-    ).group_by(models.MinimalTelemetryLog.app_name).all()
+    )
+    if selected_child and not device:
+        db_logs = []
+    else:
+        db_logs = owned_rows(logs, models.MinimalTelemetryLog, device).group_by(models.MinimalTelemetryLog.app_name).all()
 
     for app_name, total_sec in db_logs:
         if is_system_process(app_name):
@@ -1432,10 +1092,10 @@ def get_usage_stats(db: Session = Depends(database.get_db)):
         mins = sec // 60 if sec >= 60 else (1 if sec > 0 else 0)
         real_usage_map[clean_n] = mins
 
-    rules = db.query(models.AppWebRule).all()
+    rules = device_rules(db, device).all()
     rule_limits = {}
     for r in rules:
-        rule_limits[r.target_value.lower()] = r.time_limit_minutes
+        rule_limits.setdefault(r.target_value.lower(), r.time_limit_minutes)
 
     items: List[schemas.UsageItemResponse] = []
     learning_minutes = 0
@@ -1483,13 +1143,13 @@ def get_usage_stats(db: Session = Depends(database.get_db)):
             is_expired=is_exp
         ))
 
-    active_child = db.query(models.ChildProfile).filter(models.ChildProfile.is_active == True).first()
-    child_name = active_child.name if active_child else "Bé An"
+    active_child = selected_child
+    child_name = active_child.name if active_child else "Chưa có hồ sơ"
     child_daily_limit = active_child.daily_limit_minutes if active_child and active_child.daily_limit_minutes else 120
     child_remaining_seconds = max(0, (child_daily_limit * 60) - total_actual_sec)
     child_remaining = max(0, child_daily_limit - total_minutes)
 
-    last_approved_ext = db.query(models.ChildRequest).filter(
+    last_approved_ext = owned_rows(db.query(models.ChildRequest), models.ChildRequest, device).filter(
         models.ChildRequest.request_type == "TIME_EXTENSION",
         models.ChildRequest.status == "APPROVED"
     ).order_by(models.ChildRequest.id.desc()).first()
@@ -1563,130 +1223,126 @@ async def update_curfew(req: schemas.CurfewUpdateRequest, db: Session = Depends(
 # ==========================================
 # QUẢN LÝ HỒ SƠ CON CÁI (CHILD PROFILES) & ĐĂNG NHẬP
 # ==========================================
+def child_response(profile, device=None):
+    return schemas.ChildProfileResponse.model_validate(profile).model_copy(
+        update={"device": schemas.DeviceResponse.model_validate(device) if device else None}
+    )
+
+
 @app.get("/children/", response_model=List[schemas.ChildProfileResponse])
 def get_children(db: Session = Depends(database.get_db)):
-    """Lấy danh sách tất cả hồ sơ trẻ em. Tự khởi tạo hồ sơ mặc định nếu chưa có."""
-    profiles = db.query(models.ChildProfile).order_by(models.ChildProfile.id.asc()).all()
-    if not profiles:
-        default_child = models.ChildProfile(
-            name="Bé An",
-            avatar="🧒",
-            age=10,
-            pin="1234",
-            daily_limit_minutes=120,
-            is_active=True
-        )
-        db.add(default_child)
-        db.commit()
-        db.refresh(default_child)
-        profiles = [default_child]
-    return profiles
+    return [
+        child_response(child, device)
+        for child, device in db.query(models.ChildProfile, models.Device).outerjoin(
+            models.Device, models.Device.child_profile_id == models.ChildProfile.id
+        ).order_by(models.ChildProfile.id).all()
+    ]
 
-@app.post("/children/", response_model=schemas.ChildProfileResponse)
+
+@app.post("/children/", status_code=201, response_model=schemas.ChildProfileResponse)
 async def create_child(child: schemas.ChildProfileCreate, db: Session = Depends(database.get_db)):
-    """Thêm một hồ sơ trẻ mới từ phụ huynh."""
-    count = db.query(models.ChildProfile).count()
-    new_profile = models.ChildProfile(
-        name=child.name.strip(),
-        avatar=child.avatar or "🧒",
-        age=child.age or 10,
-        pin=child.pin or "1234",
-        daily_limit_minutes=child.daily_limit_minutes or 120,
-        is_active=(count == 0)
+    name = child.name.strip()
+    device_name = child.device_name.strip() if child.device_name is not None else f"Máy của {name}"[:100]
+    if not name or not device_name:
+        raise HTTPException(422, "Tên trẻ và tên máy không được để trống.")
+    profile = models.ChildProfile(
+        name=name, avatar=child.avatar or "🧒", age=child.age,
+        pin=security.hash_pin(child.pin), daily_limit_minutes=child.daily_limit_minutes,
     )
-    db.add(new_profile)
-    db.commit()
-    db.refresh(new_profile)
+    try:
+        db.add(profile)
+        db.flush()
+        device = devices.register_child_device(db, profile, device_name)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "Không thể tạo mã ghép nối. Vui lòng thử lại.") from exc
+    await manager.send_to_device("parent_dashboard", {"type": "PROFILES_UPDATED"})
+    return child_response(profile, device)
 
-    await manager.broadcast_json({
-        "type": "PROFILES_UPDATED"
-    })
-    return new_profile
+
+@app.post("/children/{child_id}/pairing", response_model=schemas.DeviceResponse)
+async def renew_child_pairing(child_id: int, db: Session = Depends(database.get_db)):
+    profile = db.get(models.ChildProfile, child_id)
+    if not profile:
+        raise HTTPException(404, "Không tìm thấy hồ sơ trẻ.")
+    device = db.query(models.Device).filter_by(child_profile_id=child_id).first()
+    old_hwid = device.device_hwid if device else None
+    try:
+        if device is None:
+            device = devices.register_child_device(db, profile, f"Máy của {profile.name}"[:100])
+        else:
+            device.device_hwid = device.pairing_token = None
+            device.is_paired = False
+            device.status = "PENDING_PAIR"
+            devices.refresh_pairing_code(db, device)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "Không thể tạo mã ghép nối. Vui lòng thử lại.") from exc
+    _pin_attempts.pop(device.id, None)
+    if old_hwid:
+        await manager.close_device(old_hwid)
+    return device
+
 
 @app.delete("/children/{child_id}")
 async def delete_child(child_id: int, db: Session = Depends(database.get_db)):
-    """Xóa hồ sơ trẻ."""
-    profile = db.query(models.ChildProfile).filter(models.ChildProfile.id == child_id).first()
+    profile = db.get(models.ChildProfile, child_id)
     if not profile:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ trẻ")
-    was_active = profile.is_active
+        raise HTTPException(404, "Không tìm thấy hồ sơ trẻ.")
+    device = db.query(models.Device).filter_by(child_profile_id=child_id).first()
+    hwid = device.device_hwid if device else None
+    if device:
+        for model in (models.TimeLimit, models.AppWebRule, models.MinimalTelemetryLog, models.ChildRequest):
+            db.query(model).filter_by(device_id=device.id).delete()
+        db.delete(device)
     db.delete(profile)
     db.commit()
+    if device:
+        _pin_attempts.pop(device.id, None)
+    if hwid:
+        await manager.close_device(hwid)
+    return {"message": "Đã xóa hồ sơ trẻ và thiết bị liên kết."}
 
-    if was_active:
-        remaining = db.query(models.ChildProfile).first()
-        if remaining:
-            remaining.is_active = True
-            db.commit()
 
-    await manager.broadcast_json({"type": "PROFILES_UPDATED"})
-    return {"message": "Đã xóa hồ sơ trẻ thành công"}
+@app.get("/children/assigned", response_model=schemas.ChildProfileResponse)
+def get_assigned_child(request: Request, db: Session = Depends(database.get_db)):
+    return db.get(models.ChildProfile, request.state.device.child_profile_id)
 
-@app.post("/children/select/{child_id}")
-async def select_child(child_id: int, db: Session = Depends(database.get_db)):
-    """Chọn hồ sơ trẻ đang hoạt động."""
-    profiles = db.query(models.ChildProfile).all()
-    target = None
-    for p in profiles:
-        if p.id == child_id:
-            p.is_active = True
-            target = p
-        else:
-            p.is_active = False
-    db.commit()
-    if not target:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ trẻ")
 
-    await manager.broadcast_json({
-        "type": "CHILD_SWITCHED",
-        "child": {
-            "id": target.id,
-            "name": target.name,
-            "avatar": target.avatar,
-            "age": target.age,
-            "daily_limit_minutes": target.daily_limit_minutes
-        }
-    })
-    return {"message": f"Đã chuyển sang hồ sơ {target.name}", "child": target}
+_pin_attempts = {}
+
 
 @app.post("/children/login")
-async def login_child(req: schemas.ChildLoginRequest, db: Session = Depends(database.get_db)):
-    """Đăng nhập máy với tư cách trẻ (kiểm tra mã PIN nếu có)."""
-    target = db.query(models.ChildProfile).filter(models.ChildProfile.id == req.child_id).first()
-    if not target:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ trẻ")
+async def login_child(req: schemas.ChildLoginRequest, request: Request, db: Session = Depends(database.get_db)):
+    device = request.state.device
+    if device.child_profile_id != req.child_id:
+        raise HTTPException(403, "Hồ sơ này không thuộc thiết bị.")
+    profile = db.get(models.ChildProfile, req.child_id)
+    now = time.monotonic()
+    failures, expires = _pin_attempts.get(device.id, (0, now + 300))
+    if now >= expires:
+        failures, expires = 0, now + 300
+    if failures >= 5:
+        raise HTTPException(429, "Sai PIN quá nhiều lần. Vui lòng thử lại sau.")
+    if not profile or not security.verify_pin(req.pin, profile.pin):
+        _pin_attempts[device.id] = (failures + 1, expires)
+        raise HTTPException(401, "PIN không chính xác.")
+    _pin_attempts.pop(device.id, None)
+    response = JSONResponse({"success": True, "message": "Đăng nhập thành công."})
+    response.set_cookie(
+        security.CHILD_COOKIE, security.dashboard_session(device), httponly=True,
+        samesite="strict", secure=request.url.scheme == "https", max_age=8 * 3600,
+    )
+    return response
 
-    if target.pin and req.pin and req.pin != target.pin:
-        raise HTTPException(status_code=400, detail="Mã PIN không chính xác!")
 
-    profiles = db.query(models.ChildProfile).all()
-    for p in profiles:
-        p.is_active = (p.id == req.child_id)
-    db.commit()
+@app.get("/children/active", response_model=Optional[schemas.ChildProfileResponse])
+def get_active_child(request: Request, db: Session = Depends(database.get_db)):
+    device = client_device(request)
+    return db.get(models.ChildProfile, device.child_profile_id) if device else None
 
-    await manager.broadcast_json({
-        "type": "CHILD_SWITCHED",
-        "child": {
-            "id": target.id,
-            "name": target.name,
-            "avatar": target.avatar,
-            "age": target.age,
-            "daily_limit_minutes": target.daily_limit_minutes
-        }
-    })
-    return {"success": True, "message": f"Đăng nhập thành công với tư cách {target.name}!", "child": target}
-
-@app.get("/children/active", response_model=schemas.ChildProfileResponse)
-def get_active_child(db: Session = Depends(database.get_db)):
-    """Lấy hồ sơ trẻ đang đăng nhập."""
-    active = db.query(models.ChildProfile).filter(models.ChildProfile.is_active == True).first()
-    if not active:
-        all_children = get_children(db)
-        if all_children:
-            active = all_children[0]
-            active.is_active = True
-            db.commit()
-    return active
 
 # ==========================================
 # CẢNH BÁO TRUY CẬP WEB LẠ & APP CHƯA PHÉP
@@ -1710,7 +1366,7 @@ async def create_alert(alert: schemas.AlertLogCreate, db: Session = Depends(data
     db.refresh(new_alert)
 
     # Báo động tức thì tới toàn bộ phụ huynh qua WebSocket
-    await manager.broadcast_json({
+    await manager.send_to_device("parent_dashboard", {
         "type": "UNAPPROVED_ATTEMPT",
         "app_name": alert.target_value,
         "category": new_alert.category,
@@ -1735,19 +1391,3 @@ def clear_all_alerts(db: Session = Depends(database.get_db)):
     db.commit()
     return {"message": "Đã xóa sạch tất cả cảnh báo"}
 
-# ==========================================
-# TỰ ĐỘNG ĐIỀN HẠN MỨC KHUYÊN DÙNG (AUTO-FILL)
-# ==========================================
-@app.post("/rules/auto-fill-defaults")
-async def auto_fill_default_limits(db: Session = Depends(database.get_db)):
-    """Tự động điền hạn mức khuyên dùng cho các web và app."""
-    rules = db.query(models.AppWebRule).all()
-    updated_count = 0
-    for r in rules:
-        info = classify_item(r.target_value)
-        r.time_limit_minutes = info["default_limit"]
-        updated_count += 1
-    db.commit()
-
-    await manager.broadcast_json({"type": "RULES_UPDATED"})
-    return {"message": f"Đã tự động điền hạn mức khuyên dùng cho {updated_count} mục!", "count": updated_count}

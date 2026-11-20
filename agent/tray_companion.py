@@ -5,6 +5,7 @@ import time
 import urllib.request
 import json
 import webbrowser
+from cloud_sync import child_dashboard_url, device_headers
 from typing import Optional
 
 _tray_thread: Optional[threading.Thread] = None
@@ -70,16 +71,16 @@ def start_tray_companion(backend_url: str = "http://127.0.0.1:8008") -> Optional
                 padx=6,
                 pady=2,
                 cursor="hand2",
-                command=lambda: webbrowser.open(f"{_backend_url}/child")
+                command=lambda: webbrowser.open(child_dashboard_url(_backend_url))
             )
             btn_open.pack(side="right", padx=2)
 
             # Click vào nhãn cũng mở web
-            label.bind("<Button-1>", lambda e: webbrowser.open(f"{_backend_url}/child"))
+            label.bind("<Button-1>", lambda e: webbrowser.open(child_dashboard_url(_backend_url)))
 
             # Menu chuột phải
             menu = tk.Menu(root, tearoff=0, bg="#1e293b", fg="white", font=("Arial", 9))
-            menu.add_command(label="🌐 Mở Góc Của Con", command=lambda: webbrowser.open(f"{_backend_url}/child"))
+            menu.add_command(label="🌐 Mở Góc Của Con", command=lambda: webbrowser.open(child_dashboard_url(_backend_url)))
             menu.add_separator()
             menu.add_command(label="Ẩn tiện ích", command=root.withdraw)
 
@@ -95,7 +96,7 @@ def start_tray_companion(backend_url: str = "http://127.0.0.1:8008") -> Optional
             # Vòng lặp cập nhật thời gian còn lại từ Backend mỗi 15s
             def _update_stats():
                 try:
-                    req = urllib.request.Request(f"{_backend_url}/usage-stats/")
+                    req = urllib.request.Request(f"{_backend_url}/usage-stats/", headers=device_headers())
                     with urllib.request.urlopen(req, timeout=2) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
                         rem_sec = data.get("remaining_seconds", 0)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, Index
 from sqlalchemy.sql import func
 from datetime import datetime
 import uuid
@@ -13,22 +13,40 @@ class User(Base):
 
 class Device(Base):
     __tablename__ = "devices"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    __table_args__ = (Index("uq_devices_child_profile", "child_profile_id", unique=True),)
+
+    id = Column(
+        String,
+        primary_key=True,
+        default=lambda: str(uuid.uuid4())
+    )
+
     device_name = Column(String(100), nullable=False)
-    device_hwid = Column(String(100), unique=True, index=True, nullable=True) # Mã phần cứng độc nhất
-    pairing_code = Column(String(20), unique=True, index=True, nullable=True) # Mã ghép nối (VD: MMT-8842)
-    pairing_token = Column(String(100), nullable=True) # Token xác thực phiên
-    is_paired = Column(Boolean, default=False) # Đã hoàn tất ghép nối hay chưa
-    status = Column(String(20), default='OFFLINE') # 'ONLINE_LAN', 'ONLINE_WAN', 'OFFLINE'
+    device_hwid = Column(String(100), unique=True, index=True, nullable=True)
+
+    pairing_code = Column(String(20), unique=True, index=True, nullable=True)
+    pairing_expires_at = Column(DateTime, nullable=True)
+
+    pairing_token = Column(String(100), nullable=True)
+    is_paired = Column(Boolean, default=False)
+
+    status = Column(String(20), default="OFFLINE")
     user_id = Column(String, ForeignKey("users.id"), nullable=True)
     child_profile_id = Column(Integer, ForeignKey("child_profiles.id"), nullable=True)
-    platform = Column(String(50), default="Linux") # 'Windows', 'Linux'
-    ip_address = Column(String(50), nullable=True)
-    anti_tamper_active = Column(Boolean, default=True) # Chống tắt qua Task Manager / Systemd
-    content_filter_active = Column(Boolean, default=True) # Bộ lọc AI văn bản & hình ảnh
-    last_seen = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
 
+    platform = Column(String(50), default="Linux")
+    ip_address = Column(String(50), nullable=True)
+
+    anti_tamper_active = Column(Boolean, default=True)
+    content_filter_active = Column(Boolean, default=True)
+
+    last_seen = Column(DateTime, nullable=True)
+    created_at = Column(
+        DateTime,
+        server_default=func.now(),
+        default=datetime.utcnow
+    )
+    
 class TimeLimit(Base):
     __tablename__ = "time_limits"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -50,6 +68,7 @@ class AppWebRule(Base):
 
 class MinimalTelemetryLog(Base):
     __tablename__ = "minimal_telemetry_logs"
+    device_id = Column(String, ForeignKey("devices.id"), index=True)
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     app_name = Column(String(100), nullable=False)
     domain = Column(String(255), nullable=True)
@@ -61,6 +80,7 @@ UsageLog = MinimalTelemetryLog
 
 class ChildRequest(Base):
     __tablename__ = "child_requests"
+    device_id = Column(String, ForeignKey("devices.id"), index=True)
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     request_type = Column(String(50), nullable=False) # 'TIME_EXTENSION', 'PERMISSION_WEB', 'PERMISSION_APP'
     target_detail = Column(String(255), nullable=False, default="")
@@ -71,15 +91,6 @@ class ChildRequest(Base):
 
 TimeRequest = ChildRequest
 
-class Task(Base):
-    __tablename__ = "tasks"
-    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
-    title = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
-    reward_minutes = Column(Integer, default=15) # Số phút thưởng khi hoàn thành
-    status = Column(String(30), default="TODO") # 'TODO', 'COMPLETED_WAITING_APPROVAL', 'APPROVED'
-    created_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
-
 class ChildProfile(Base):
     """Hồ sơ cá nhân của trẻ để đăng nhập và áp dụng cài đặt riêng"""
     __tablename__ = "child_profiles"
@@ -87,10 +98,16 @@ class ChildProfile(Base):
     name = Column(String(100), nullable=False)
     avatar = Column(String(50), default="🧒")
     age = Column(Integer, default=10)
-    pin = Column(String(10), default="1234") # Mã PIN đăng nhập
+    pin = Column(String(160))  # Salted PIN hash
     daily_limit_minutes = Column(Integer, default=120)
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
+
+class DailyRollover(Base):
+    __tablename__ = "daily_rollover"
+    id = Column(Integer, primary_key=True)
+    day = Column(String(10), nullable=False)
+
 
 class AlertLog(Base):
     """Nhật ký cảnh báo khi trẻ cố truy cập web lạ hoặc app bị cấm"""

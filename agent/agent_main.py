@@ -1,5 +1,5 @@
 import asyncio
-import websockets
+from websockets.asyncio.client import connect
 import json
 import time
 import sys
@@ -12,7 +12,7 @@ import urllib.request
 from monitor import get_active_app_metadata
 from blocker import enforce_block_policy, kill_blocked_process, block_websites, unblock_websites, unblock_all_websites, lock_system, extract_domain
 from hwid import get_device_hwid, get_machine_info
-from cloud_sync import load_agent_config, save_agent_config, pair_with_backend, fetch_parent_config
+from cloud_sync import load_agent_config, device_headers, pair_with_backend, fetch_parent_config
 from lan_discovery import discover_parent_server
 from ai_filter.content_guard import AIContentGuard
 from anti_tamper.supervisor import AntiTamperSupervisor, report_tamper_attempt
@@ -148,15 +148,10 @@ def sync_allowed_rules():
     """Tải danh sách các quy tắc ALLOW và BLOCK từ server về Agent."""
     global ALLOWED_TARGETS, BLOCKED_DOMAINS, BLOCKED_KEYWORDS, BACKEND_HTTP
     urls_to_try = [f"{BACKEND_HTTP}/rules/"]
-    if "127.0.0.1" in BACKEND_HTTP or "localhost" in BACKEND_HTTP:
-        for p in [8008, 8000, 8001, 8080]:
-            u = f"http://127.0.0.1:{p}/rules/"
-            if u not in urls_to_try:
-                urls_to_try.append(u)
 
     for u in urls_to_try:
         try:
-            req = urllib.request.Request(u)
+            req = urllib.request.Request(u, headers=device_headers(DEVICE_CONFIG))
             with urllib.request.urlopen(req, timeout=2) as resp:
                 rules = json.loads(resp.read().decode())
                 base_u = u.replace("/rules/", "")
@@ -197,7 +192,7 @@ def send_telemetry(app_name: str, duration_sec: int = 10):
         req = urllib.request.Request(
             f"{BACKEND_HTTP}/telemetry/", 
             data=payload, 
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **device_headers(DEVICE_CONFIG)},
             method="POST"
         )
         urllib.request.urlopen(req, timeout=1)
@@ -249,7 +244,7 @@ async def monitor_apps_task():
                     req = urllib.request.Request(
                         f"{BACKEND_HTTP}/alerts/",
                         data=alert_payload,
-                        headers={"Content-Type": "application/json"},
+                        headers={"Content-Type": "application/json", **device_headers(DEVICE_CONFIG)},
                         method="POST"
                     )
                     urllib.request.urlopen(req, timeout=1)
@@ -276,11 +271,11 @@ async def monitor_apps_task():
 
 async def listen_to_server():
     """Tác vụ kết nối WebSocket / Cloud Relay (Hỗ trợ cả LAN và WAN)."""
-    global active_ws, ALLOWED_TARGETS
+    global active_ws, ALLOWED_TARGETS, time_limit_locked
     while True:
         try:
             active_uri = get_ws_url(BACKEND_HTTP)
-            async with websockets.connect(active_uri) as websocket:
+            async with connect(active_uri, additional_headers=device_headers(DEVICE_CONFIG)) as websocket:
                 active_ws = websocket
                 print(f"✅ [CLOUD RELAY] Đã kết nối kênh từ xa ({active_uri}) cho thiết bị: {DEVICE_HWID}")
                 await websocket.send(json.dumps({
@@ -296,7 +291,13 @@ async def listen_to_server():
                     response = await websocket.recv()
                     print(f"🔔 [LỆNH TỪ SERVER]: {response}")
                     
-                    if "LOCK_MACHINE" in response:
+                    try:
+                        data = json.loads(response)
+                        msg_type = data.get("type", "") if isinstance(data, dict) else ""
+                    except (ValueError, TypeError):
+                        continue
+
+                    if msg_type == "LOCK_MACHINE":
                         print("🔒 [AGENT] Nhận lệnh khóa máy từ Phụ huynh! Đang khóa...")
                         show_kiosk_lock(
                             reason="Phụ huynh đã tạm khóa máy tính từ xa",
@@ -304,14 +305,12 @@ async def listen_to_server():
                             backend_url=BACKEND_HTTP
                         )
                         lock_system()
-                    elif "UNLOCK_MACHINE" in response:
+                    elif msg_type == "UNLOCK_MACHINE":
                         print("🔓 [AGENT] Nhận lệnh mở khóa máy từ Phụ huynh!")
                         time_limit_locked = False
                         hide_kiosk_lock()
 
                     try:
-                        data = json.loads(response)
-                        msg_type = data.get("type", "")
                         
                         if msg_type == "REQUEST_DECIDED":
                             req_info = data.get("data", {})
@@ -340,9 +339,9 @@ async def listen_to_server():
                                                 print(f"✅ [AGENT] Đã gỡ từ khóa cấm: {kw}")
                                     sync_allowed_rules()
 
-                        elif msg_type in ["RULES_RESET", "FULL_RESET", "RULES_UPDATED", "LIMIT_UPDATED", "ONBOARDING_UPDATED"]:
-                            print("🔄 [AGENT] Nhận tín hiệu cập nhật cấu hình quy tắc từ Phụ huynh!")
-                            if msg_type in ["RULES_RESET", "FULL_RESET", "LIMIT_UPDATED"]:
+                        elif msg_type in ["RULES_RESET", "FULL_RESET", "RULES_UPDATED", "LIMIT_UPDATED", "ONBOARDING_UPDATED", "DAILY_RESET_TRIGGERED", "DAILY_RESET", "USAGE_RESET"]:
+                            print(f"🔄 [AGENT] Nhận tín hiệu cập nhật / làm mới từ máy chủ ({msg_type})!")
+                            if msg_type in ["RULES_RESET", "FULL_RESET", "LIMIT_UPDATED", "DAILY_RESET_TRIGGERED", "DAILY_RESET", "USAGE_RESET"]:
                                 time_limit_locked = False
                                 hide_kiosk_lock()
                             sync_allowed_rules()
@@ -362,7 +361,7 @@ async def check_bedtime_task():
     global bedtime_locked, time_limit_locked, BACKEND_HTTP
     while True:
         try:
-            req = urllib.request.Request(f"{BACKEND_HTTP}/usage-stats/")
+            req = urllib.request.Request(f"{BACKEND_HTTP}/usage-stats/", headers=device_headers(DEVICE_CONFIG))
             with urllib.request.urlopen(req, timeout=3) as resp:
                 data = json.loads(resp.read().decode())
                 is_bedtime = data.get("is_bedtime", False)
@@ -413,19 +412,14 @@ async def main():
             ai_guard.backend_url = BACKEND_HTTP
         print(f"🚀 [AGENT] Trợ lý an toàn máy tính đã khởi động (HWID: {DEVICE_HWID})")
         
-        # Khởi chạy tiện ích khay hệ thống (System Tray Companion)
-        start_tray_companion(BACKEND_HTTP)
+        if not DEVICE_CONFIG.get("device_credential"):
+            print("Hãy tạo mã ghép nối trong hồ sơ trẻ và dùng --pair-code để đăng ký máy.")
+            return
 
-        # Kiểm tra trạng thái ghép nối
-        if not DEVICE_CONFIG.get("is_paired"):
-            print("💡 [HƯỚNG DẪN GHÉP NỐI]: Thiết bị chưa ghép nối với Phụ huynh.")
-            print(f"   Mã phần cứng: {DEVICE_HWID}")
-            print("   Để ghép nối, chạy: python agent_main.py --pair-code <MÃ_GHÉP_NỐI>")
-        else:
-            print(f"🔗 [GHÉP NỐI]: Đã ghép nối an toàn với máy chủ Phụ huynh.")
-            p_cfg = fetch_parent_config(DEVICE_HWID, BACKEND_HTTP)
-            if p_cfg:
-                print(f"📥 [ĐỒNG BỘ]: Hạn mức: {p_cfg.get('daily_limit_minutes')}p | Giới nghiêm: {p_cfg.get('bedtime')}")
+        start_tray_companion(BACKEND_HTTP)
+        p_cfg = fetch_parent_config(DEVICE_HWID, BACKEND_HTTP)
+        if p_cfg:
+            print(f"📥 [ĐỒNG BỘ]: Hạn mức: {p_cfg.get('daily_limit_minutes')}p | Giới nghiêm: {p_cfg.get('bedtime')}")
 
         sync_allowed_rules()
         block_websites(BLOCKED_DOMAINS)
@@ -447,7 +441,8 @@ if __name__ == "__main__":
         idx = sys.argv.index("--pair-code")
         if idx + 1 < len(sys.argv):
             p_code = sys.argv[idx + 1]
-            pair_with_backend(p_code, BACKEND_HTTP)
+            if not pair_with_backend(p_code, BACKEND_HTTP):
+                sys.exit(1)
     
     try:
         if "--supervisor" in sys.argv:

@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
+import base64
 import json
+import os
 import urllib.request
 
 API_BASE = "http://127.0.0.1:8008"
@@ -8,6 +10,12 @@ API_BASE = "http://127.0.0.1:8008"
 def send_api(endpoint, data=None, method="GET"):
     """Gửi HTTP request bằng urllib, tự động thử cổng 8008 và 8000."""
     global API_BASE
+    password = os.getenv("MMT_PARENT_PASSWORD") or simpledialog.askstring(
+        "MMT", "Mật khẩu phụ huynh", show="*", parent=root
+    )
+    if not password:
+        return None, "Cần mật khẩu phụ huynh."
+    auth = base64.b64encode(f"parent:{password}".encode()).decode()
     for port in [8008, 8000, 8001, 8080]:
         base = f"http://127.0.0.1:{port}"
         try:
@@ -16,11 +24,12 @@ def send_api(endpoint, data=None, method="GET"):
             req = urllib.request.Request(
                 url, 
                 data=payload, 
-                headers={"Content-Type": "application/json"} if payload is not None else {}, 
+                headers={"Content-Type": "application/json", "Authorization": f"Basic {auth}"},
                 method=method
             )
             with urllib.request.urlopen(req, timeout=2) as resp:
                 API_BASE = base
+                os.environ["MMT_PARENT_PASSWORD"] = password
                 return json.loads(resp.read().decode("utf-8")), None
         except Exception:
             continue
@@ -154,15 +163,6 @@ def send_message_to_child():
         else:
             messagebox.showinfo("Đã gửi", f"💬 Đã gửi lời nhắn: '{msg.strip()}' tới con!")
 
-def reset_daily():
-    """Reset sang ngày mới"""
-    if messagebox.askyesno("Xác nhận", "Bắt đầu ngày mới? Thời gian đã dùng sẽ về 0 và danh sách việc tốt sẽ được mở lại."):
-        res, err = send_api("/reset/daily", {}, method="POST")
-        if err:
-            messagebox.showerror("Lỗi", str(err))
-        else:
-            messagebox.showinfo("Thành công", "🌅 Đã reset sang ngày mới thành công!")
-
 def reset_usage():
     """Reset thời gian sử dụng hôm nay về 0"""
     if messagebox.askyesno("Xác nhận Reset", "Đặt lại toàn bộ thời gian sử dụng hôm nay về 0 phút?"):
@@ -270,8 +270,7 @@ frame_reset.pack(fill="x")
 
 reset_btn_frame = tk.Frame(frame_reset)
 reset_btn_frame.pack(fill="x")
-tk.Button(reset_btn_frame, text="🌅 Reset Ngày Mới", bg="#4f46e5", fg="white", font=("Segoe UI", 8, "bold"), command=reset_daily).pack(side="left", padx=3, expand=True, fill="x")
-tk.Button(reset_btn_frame, text="⏱️ Reset Thời gian", bg="#64748b", fg="white", font=("Segoe UI", 8, "bold"), command=reset_usage).pack(side="left", padx=3, expand=True, fill="x")
+tk.Button(reset_btn_frame, text="⏱️ Reset Thời gian", bg="#2563eb", fg="white", font=("Segoe UI", 8, "bold"), command=reset_usage).pack(side="left", padx=3, expand=True, fill="x")
 tk.Button(reset_btn_frame, text="🛡️ Reset Quy tắc", bg="#64748b", fg="white", font=("Segoe UI", 8, "bold"), command=reset_rules).pack(side="left", padx=3, expand=True, fill="x")
 tk.Button(reset_btn_frame, text="⚠️ Khôi phục gốc", bg="#b91c1c", fg="white", font=("Segoe UI", 8, "bold"), command=reset_all).pack(side="left", padx=3, expand=True, fill="x")
 

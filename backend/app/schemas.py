@@ -1,11 +1,11 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal, Optional, List
 from datetime import datetime
 
 class TelemetryCreate(BaseModel):
     app_name: str
     domain: Optional[str] = None
-    duration_seconds: int
+    duration_seconds: int = Field(ge=0)
 
 class ChildRequestCreate(BaseModel):
     request_type: str # 'PERMISSION_WEB', 'PERMISSION_APP', 'TIME_EXTENSION'
@@ -16,6 +16,7 @@ class ChildRequestCreate(BaseModel):
 
 class ChildRequestResponse(BaseModel):
     id: int
+    child_name: Optional[str] = None
     request_type: str
     target_detail: Optional[str] = None
     reason_from_child: Optional[str] = None
@@ -23,11 +24,10 @@ class ChildRequestResponse(BaseModel):
     parent_feedback: Optional[str] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class RequestActionUpdate(BaseModel):
-    status: str # "APPROVED" hoặc "REJECTED"
+    status: Literal["APPROVED", "REJECTED"]
     parent_feedback: Optional[str] = None
 
 # Schemas cho Thống kê thời gian sử dụng & Giới hạn thời gian
@@ -45,7 +45,7 @@ class UsageItemResponse(BaseModel):
     remaining_formatted: str # "Còn 35 phút" hoặc "Không giới hạn" hoặc "Đã hết giờ"
     is_expired: bool # True nếu đã dùng hết giờ giới hạn
 
-class UsageStatsResponse(BaseModel):
+class UsageStatsResponse(BaseModel): #default 
     total_minutes: int
     total_formatted: str
     learning_minutes: int
@@ -59,7 +59,7 @@ class UsageStatsResponse(BaseModel):
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
     wakeup_hour: str = "06:00"
-    child_name: Optional[str] = "Bé An"
+    child_name: Optional[str] = "Chưa có hồ sơ"
     daily_limit_minutes: Optional[int] = 120
     remaining_minutes: Optional[int] = 120
     total_seconds: Optional[int] = 0
@@ -90,14 +90,7 @@ class AppWebRuleResponse(BaseModel):
     remaining_formatted: str
     is_expired: bool
 
-    class Config:
-        from_attributes = True
-
-# Schemas cho Gamification: Đổi việc tốt lấy giờ chơi
-class TaskInitial(BaseModel):
-    title: str
-    description: Optional[str] = None
-    reward_minutes: int = 15
+    model_config = ConfigDict(from_attributes=True)
 
 # Schemas cho Thiết lập lần đầu (Onboarding Setup)
 class OnboardingSetupRequest(BaseModel):
@@ -107,48 +100,32 @@ class OnboardingSetupRequest(BaseModel):
     wakeup_time: str = "06:00"
     allowed_sites: List[str] = ["khanacademy.org", "wikipedia.org", "duolingo.com"]
     blocked_sites: List[str] = ["youtube.com", "facebook.com", "discord.com", "tiktok.com", "roblox"]
-    initial_tasks: Optional[List[TaskInitial]] = None
-
-class TaskCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    reward_minutes: int = 15
-
-class TaskResponse(BaseModel):
-    id: int
-    title: str
-    description: Optional[str] = None
-    reward_minutes: int
-    status: str # 'TODO', 'COMPLETED_WAITING_APPROVAL', 'APPROVED'
-    created_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
 
 # Schemas cho Hồ sơ trẻ em & Đăng nhập máy
 class ChildProfileCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=100)
+    device_name: Optional[str] = Field(default=None, max_length=100)
     avatar: Optional[str] = "🧒"
-    age: Optional[int] = 10
-    pin: Optional[str] = "1234"
-    daily_limit_minutes: Optional[int] = 120
+    age: int = Field(default=10, ge=4, le=18)
+    pin: str = Field(pattern=r"^[0-9]{4}$")
+    daily_limit_minutes: int = Field(default=120, ge=1, le=1440)
 
 class ChildProfileResponse(BaseModel):
     id: int
     name: str
     avatar: str
     age: int
-    pin: str
     daily_limit_minutes: int
     is_active: bool
     created_at: Optional[datetime] = None
+    device: Optional["DeviceResponse"] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class ChildLoginRequest(BaseModel):
     child_id: int
-    pin: Optional[str] = None
+    pin: str = Field(pattern=r"^[0-9]{4}$")
 
 # Schemas cho Cảnh báo truy cập web lạ / chưa phép & AI Content Filter
 class AlertLogCreate(BaseModel):
@@ -165,8 +142,7 @@ class AlertLogResponse(BaseModel):
     is_web: bool
     timestamp: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Schemas cho Cập nhật Khung giờ giới nghiêm
 class CurfewUpdateRequest(BaseModel):
@@ -201,31 +177,37 @@ class DeviceResponse(BaseModel):
     device_name: str
     device_hwid: Optional[str] = None
     pairing_code: Optional[str] = None
+    pairing_expires_at: Optional[datetime] = None
     is_paired: bool
     status: str
     child_profile_id: Optional[int] = None
     child_name: Optional[str] = None
-    platform: Optional[str] = "Linux"
+    platform: Optional[str] = "Linux" 
     anti_tamper_active: bool = True
     content_filter_active: bool = True
     last_seen: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DeviceConfigResponse(BaseModel):
     device_hwid: str
     device_name: str
     child_name: str
+
     daily_limit_minutes: int
     bedtime: str
     wakeup_time: str
+
     allowed_rules: List[str]
     blocked_rules: List[str]
+
     anti_tamper_enabled: bool = True
     content_filter_enabled: bool = True
-    admin_password_hash: str = "admin123"
+
+class DevicePairResponse(DeviceConfigResponse):
+    device_credential: str
+
 
 # Schemas cho AI Content Filter
 class ContentFilterAnalysisRequest(BaseModel):
@@ -241,3 +223,6 @@ class ContentFilterResult(BaseModel):
     reason: Optional[str] = None
     suggested_action: str = "ALLOW" # 'ALLOW', 'BLOCK_AND_CLOSE', 'WARN'
 
+
+
+ChildProfileResponse.model_rebuild()

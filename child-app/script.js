@@ -1,13 +1,15 @@
-let API_BASE = "http://127.0.0.1:8008";
-        let WS_BASE = "ws://127.0.0.1:8008";
+const enrollment = new URLSearchParams(location.hash.slice(1)).get("device");
+if (enrollment) {
+    sessionStorage.setItem("mmtEnrollment", enrollment);
+    history.replaceState(null, "", location.pathname + location.search);
+}
+function enrollmentHeaders() {
+    return { Authorization: "Bearer " + (sessionStorage.getItem("mmtEnrollment") || "") };
+}
+let socketRetry;
 
-        if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-            const host = window.location.hostname || "127.0.0.1";
-            const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
-            const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-            API_BASE = `${window.location.protocol}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-            WS_BASE = `${wsProto}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-        }
+const API_BASE = location.origin;
+const WS_BASE = API_BASE.replace(/^http/, "ws");
 
         let ws = null;
         let countdownInterval = null;
@@ -137,9 +139,7 @@ let API_BASE = "http://127.0.0.1:8008";
         const tabMeta = {
             overview: { title: "Tổng Quan & Đếm Ngược", desc: "Tự giác cân đối giữa Học tập 📚 và Giải trí 🎮" },
             allowed: { title: "Web & App Được Phép", desc: "Danh sách website và ứng dụng con được phép sử dụng tự do" },
-            check: { title: "Kiểm Tra & Vào Web An Toàn", desc: "Kiểm tra độ an toàn trước khi vào trang web mới" },
             stats: { title: "Thống Kê Chi Tiết Thời Gian", desc: "Biểu đồ phân loại theo Học tập, Giải trí và Mạng xã hội" },
-            gamification: { title: "Đổi Việc Tốt Lấy Giờ Chơi", desc: "Hoàn thành nhiệm vụ tốt để tích lũy thêm giờ chơi" },
             request: { title: "Gửi Yêu Cầu Xin Phép", desc: "Xin thêm giờ sử dụng hoặc xin mở web/ứng dụng mới" },
             history: { title: "Hộp Thư & Lịch Sử", desc: "Theo dõi phản hồi và dặn dò từ cha mẹ" }
         };
@@ -182,70 +182,24 @@ let API_BASE = "http://127.0.0.1:8008";
         setInterval(updateClock, 1000);
         updateClock();
 
-        // --- TỰ ĐỘNG DÒ TÌM CỔNG BACKEND HOẠT ĐỘNG ---
-        async function autoDetectBackendPort() {
-            if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-                const host = window.location.hostname || "127.0.0.1";
-                const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
-                const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-                API_BASE = `${window.location.protocol}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-                WS_BASE = `${wsProto}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-                const portEl = document.getElementById("sidebar-port");
-                if (portEl) portEl.textContent = port;
-                const statusEl = document.getElementById("sidebar-backend-status");
-                if (statusEl) statusEl.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Trực tuyến (${host}:${port})`;
-                const banner = document.getElementById("server-offline-banner");
-                if (banner) banner.classList.add("hidden");
-                return;
-            }
-
-            const candidatePorts = [8008, 8000, 8001, 8080];
-            const currentPort = window.location.port;
-            if (currentPort && !candidatePorts.includes(parseInt(currentPort))) {
-                candidatePorts.unshift(parseInt(currentPort));
-            }
-
-            for (const port of candidatePorts) {
-                try {
-                    const testUrl = `http://127.0.0.1:${port}/usage-stats/`;
-                    const ctrl = new AbortController();
-                    const timer = setTimeout(() => ctrl.abort(), 800);
-                    const res = await fetch(testUrl, { signal: ctrl.signal });
-                    clearTimeout(timer);
-                    if (res.ok) {
-                        API_BASE = `http://127.0.0.1:${port}`;
-                        WS_BASE = `ws://127.0.0.1:${port}`;
-                        document.getElementById("sidebar-port").textContent = port;
-                        document.getElementById("sidebar-backend-status").innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Trực tuyến (Cổng ${port})`;
-                        document.getElementById("server-offline-banner").classList.add("hidden");
-                        return;
-                    }
-                } catch (e) {}
-            }
-            document.getElementById("server-offline-banner").classList.remove("hidden");
-            document.getElementById("sidebar-backend-status").innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> Mất kết nối`;
-        }
-
-        function changeBackendUrl() {
-            const input = document.getElementById("custom-backend-url").value.trim();
-            if (input) {
-                API_BASE = input.replace(/\/$/, "");
-                WS_BASE = API_BASE.replace(/^http/, "ws");
-                initWebSocket();
-                fetchActiveChild();
-                fetchAllowedRules();
-                fetchUsageStats();
-                fetchTasks();
-                fetchChildRequests();
-                document.getElementById("server-offline-banner").classList.add("hidden");
-            }
+        function showBackendAddress() {
+            const port = location.port || (location.protocol === "https:" ? "443" : "80");
+            const portElement = document.getElementById("sidebar-port");
+            if (portElement) portElement.textContent = port;
+            const status = document.getElementById("sidebar-backend-status");
+            if (status) status.textContent = `Máy chủ ${location.host}`;
         }
 
         // --- KHỞI TẠO WEBSOCKET ĐỂ NHẬN LỆNH THỜI GIAN THỰC ---
         function initWebSocket() {
+            clearTimeout(socketRetry);
+            if (!currentChild) return;
             const wsBadge = document.getElementById("ws-badge");
             try {
-                if (ws) ws.close();
+                if (ws) {
+                    ws.onclose = null;
+                    ws.close();
+                }
                 ws = new WebSocket(`${WS_BASE}/ws/agent/child_pc_01`);
 
                 ws.onopen = () => {
@@ -263,7 +217,7 @@ let API_BASE = "http://127.0.0.1:8008";
                 ws.onclose = () => {
                     wsBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600";
                     wsBadge.innerHTML = '<span class="w-2 h-2 mr-1.5 rounded-full bg-slate-400"></span> Mất kết nối';
-                    setTimeout(initWebSocket, 4000);
+                    socketRetry = setTimeout(initWebSocket, 4000);
                 };
 
                 ws.onerror = () => {
@@ -271,7 +225,7 @@ let API_BASE = "http://127.0.0.1:8008";
                     wsBadge.innerHTML = '<span class="w-2 h-2 mr-1.5 rounded-full bg-rose-500"></span> Lỗi mạng';
                 };
             } catch (err) {
-                setTimeout(initWebSocket, 4000);
+                socketRetry = setTimeout(initWebSocket, 4000);
             }
         }
 
@@ -287,11 +241,12 @@ let API_BASE = "http://127.0.0.1:8008";
                 showDesktopNotification("🔓 Thông báo từ Cha Mẹ", "Máy tính đã được mở khóa!");
                 document.getElementById("emergency-lock-overlay").classList.add("hidden");
                 showToast("🔓 Cha Mẹ đã mở khóa máy tính!", "emerald");
-            } else if (type === "PARENT_MESSAGE") {
+            } else if (type === "PARENT_MESSAGE" || type === "MESSAGE") {
+                const message = data.message || data.data?.message || "";
                 playNotificationSound('ting');
-                showDesktopNotification("💬 Lời nhắn từ Cha Mẹ", data.message || "Cha Mẹ vừa gửi một lời nhắn cho con!");
+                showDesktopNotification("💬 Lời nhắn từ Cha Mẹ", message || "Cha Mẹ vừa gửi một lời nhắn cho con!");
                 const banner = document.getElementById("parent-message-banner");
-                document.getElementById("parent-message-text").innerText = data.message || "";
+                document.getElementById("parent-message-text").innerText = message;
                 banner.classList.remove("hidden");
                 showToast("💬 Cha Mẹ vừa gửi một lời nhắn cho con!", "indigo");
             } else if (type === "REQUEST_DECIDED") {
@@ -336,13 +291,12 @@ let API_BASE = "http://127.0.0.1:8008";
                 fetchUsageStats();
             } else if (type === "CURFEW_UPDATED") {
                 fetchUsageStats();
-            } else if (type === "DAILY_RESET_TRIGGERED") {
+            } else if (type === "DAILY_RESET_TRIGGERED" || type === "DAILY_RESET") {
                 showToast("🌅 Chào ngày mới! Thời gian đã được làm mới tự động.", "emerald");
                 countdownSeconds = -1;
                 lastServerDailyLimit = null;
                 fetchAllowedRules();
                 fetchUsageStats();
-                fetchTasks();
                 fetchChildRequests();
             } else if (type === "USAGE_RESET" || type === "RULES_RESET" || type === "FULL_RESET" || type === "LIMIT_UPDATED") {
                 showToast("⚙️ Dữ liệu hệ thống vừa được cập nhật!", "blue");
@@ -369,7 +323,7 @@ let API_BASE = "http://127.0.0.1:8008";
 
             toast.className = `toast p-3 rounded-xl text-xs font-semibold shadow-md flex items-center justify-between ${colorClasses[color] || colorClasses.blue}`;
             toast.innerHTML = `
-                <span>${message}</span>
+                <span>${escapeHtml(message)}</span>
                 <button onclick="this.parentElement.remove()" class="ml-2 font-bold opacity-80 hover:opacity-100">&times;</button>
             `;
             container.appendChild(toast);
@@ -489,7 +443,6 @@ let API_BASE = "http://127.0.0.1:8008";
 
         // --- TẢI DANH SÁCH QUY TẮC ĐƯỢC PHÉP (ALLOWED RULES) ---
         let allowedRulesCache = [];
-        let pendingStrangeTarget = "";
 
         async function fetchAllowedRules() {
             try {
@@ -509,8 +462,6 @@ let API_BASE = "http://127.0.0.1:8008";
                 container.innerHTML = allowed.map(r => {
                     const isWeb = r.rule_type === "WEBSITE" || r.target_value.includes(".");
                     const icon = isWeb ? "🌐" : "💻";
-                    const webUrl = r.target_value.startsWith("http") ? r.target_value : `https://${r.target_value}`;
-                    
                     const remBadgeClass = r.is_expired ? "bg-rose-100 text-rose-800" : (r.remaining_minutes <= 15 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800");
 
                     return `
@@ -521,7 +472,7 @@ let API_BASE = "http://127.0.0.1:8008";
                                 </div>
                                 <div>
                                     <div class="font-bold text-xs text-slate-800 flex items-center gap-1.5">
-                                        <span>${r.target_value}</span>
+                                        <span>${escapeHtml(r.target_value)}</span>
                                         <span class="text-[10px] px-1.5 py-0.2 rounded font-semibold ${remBadgeClass}">
                                             ${r.remaining_formatted}
                                         </span>
@@ -534,11 +485,11 @@ let API_BASE = "http://127.0.0.1:8008";
 
                             <div>
                                 ${isWeb ? `
-                                    <button onclick="handleOpenAllowedTarget('${r.target_value}')" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                    <button data-target="${escapeHtml(r.target_value)}" onclick="handleOpenAllowedTarget(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
                                         <span>Mở trang web</span> ↗
                                     </button>
                                 ` : `
-                                    <button onclick="handleOpenAllowedTarget('${r.target_value}')" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                    <button data-target="${escapeHtml(r.target_value)}" onclick="handleOpenAllowedTarget(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
                                         <span>Mở ứng dụng</span> 🚀
                                     </button>
                                 `}
@@ -568,7 +519,7 @@ let API_BASE = "http://127.0.0.1:8008";
                 document.getElementById("active-tracking-title").textContent = targetName;
                 const catEl = document.getElementById("active-tracking-category");
                 if (catEl) {
-                    catEl.innerHTML = `${aiInfo.icon || '📱'} ${aiInfo.category || 'Chưa phân loại'}`;
+                    catEl.textContent = `${aiInfo.icon || '📱'} ${aiInfo.category || 'Chưa phân loại'}`;
                     catEl.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${aiInfo.badge_color || 'bg-blue-100 text-blue-800 border-blue-300'}`;
                 }
                 document.getElementById("active-tracking-time").textContent = "00:00";
@@ -638,8 +589,8 @@ let API_BASE = "http://127.0.0.1:8008";
                     const aiInfo = data.classification || {};
                     const isWeb = targetValue.includes(".") || targetValue.startsWith("http");
                     if (isWeb) {
-                        const webUrl = targetValue.startsWith("http") ? targetValue : `https://${targetValue}`;
-                        window.open(webUrl, '_blank');
+                        const webUrl = new URL(/^https?:\/\//i.test(targetValue) ? targetValue : `https://${targetValue}`);
+                        window.open(webUrl.href, "_blank", "noopener,noreferrer");
                     }
                     showToast(`✅ Đang mở: ${targetValue} • AI gán nhãn: ${aiInfo.icon || '🏷️'} ${aiInfo.category || ''}`, "emerald");
                     startActiveUsageTracking(targetValue, aiInfo);
@@ -647,120 +598,11 @@ let API_BASE = "http://127.0.0.1:8008";
                 }
             } catch (e) {}
 
-            const isWeb = targetValue.includes(".") || targetValue.startsWith("http");
-            if (isWeb) {
-                const webUrl = targetValue.startsWith("http") ? targetValue : `https://${targetValue}`;
-                window.open(webUrl, '_blank');
-            }
-            startActiveUsageTracking(targetValue, { category: 'Ứng dụng khác', icon: '🌐' });
-        }
-
-        // --- KIỂM TRA TRUY CẬP WEBSITE & CẢNH BÁO WEB LẠ ---
-        async function checkAndOpenUrl() {
-            const input = document.getElementById("check-url-input");
-            const rawVal = (input.value || "").trim();
-            if (!rawVal) return alert("Vui lòng nhập địa chỉ website hoặc ứng dụng con muốn vào!");
-
-            let domain = rawVal.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].split('?')[0];
-
-            // 0. AI Content Filter kiểm tra thời gian thực từ khóa & ngữ nghĩa
-            try {
-                const aiRes = await fetch(`${API_BASE}/ai/content-check`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ text_content: rawVal, url: domain })
-                });
-                if (aiRes.ok) {
-                    const aiData = await aiRes.json();
-                    if (!aiData.is_safe) {
-                        const alertEl = document.getElementById("ai-content-alert");
-                        if (alertEl) {
-                            document.getElementById("ai-alert-title").innerText = `🤖 AI FILTER: NỘI DUNG KHÔNG PHÙ HỢP ("${rawVal}")!`;
-                            document.getElementById("ai-alert-desc").innerText = aiData.reason || "Hệ thống AI vừa phát hiện nội dung có thể không phù hợp với lứa tuổi của con.";
-                            alertEl.classList.remove("hidden");
-                        }
-                        showToast(`🚨 AI Content Filter đã chặn: ${rawVal}`, "rose");
-                        fetch(`${API_BASE}/alerts/`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                target_value: rawVal,
-                                reason: `AI Filter chặn: ${aiData.reason}`,
-                                category: `AI_CONTENT_${aiData.violation_category || 'TEXT'}`,
-                                is_web: true
-                            })
-                        }).catch(() => {});
-                        return;
-                    }
-                }
-            } catch (e) {}
-
-            try {
-                // 1. Kiểm tra với Backend xem web/app có được phép không + Lấy nhãn AI
-                const res = await fetch(`${API_BASE}/check-permission/`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target: domain })
-                });
-
-                if (res.ok) {
-                    const checkResult = await res.json();
-                    const aiInfo = checkResult.classification || {};
-                    
-                    if (checkResult.allowed) {
-                        // ĐƯỢC PHÉP: Mở web và đếm giờ sử dụng!
-                        document.getElementById("strange-web-alert").classList.add("hidden");
-                        let fullUrl = rawVal.startsWith("http") ? rawVal : `https://${domain}`;
-                        window.open(fullUrl, '_blank');
-                        
-                        showToast(`✅ Được phép mở: ${domain} • AI gán nhãn: ${aiInfo.icon || '🏷️'} ${aiInfo.category || ''}`, "emerald");
-                        
-                        // BẮT ĐẦU ĐẾM GIỜ SỬ DỤNG CHO MỤC NÀY (ACTIVE USAGE TRACKER)
-                        startActiveUsageTracking(domain, aiInfo);
-                    } else {
-                        // KHÔNG ĐƯỢC PHÉP: Cảnh báo web lạ / bị chặn + Nhãn AI
-                        pendingStrangeTarget = domain;
-                        const alertBox = document.getElementById("strange-web-alert");
-                        document.getElementById("strange-alert-title").innerText = `⚠️ CẢNH BÁO: "${domain}" CHƯA ĐƯỢC PHÉP!`;
-                        document.getElementById("strange-alert-desc").innerHTML = `
-                            ${checkResult.reason || 'Trang web chưa được cha mẹ duyệt.'}<br>
-                            <span class="inline-flex items-center gap-1 mt-2 text-[11px] font-bold ${aiInfo.badge_color || ''} px-2.5 py-0.5 rounded-md border">
-                                <span>Phân loại AI:</span> <span>${aiInfo.icon || '💻'}</span> <span>${aiInfo.category || 'Chưa phân loại'}</span>
-                            </span>
-                        `;
-                        alertBox.classList.remove("hidden");
-                        showToast(`🛑 Đã chặn "${domain}"! ${checkResult.reason}`, "rose");
-
-                        // Gửi alert lên server để cha mẹ thấy tức thì
-                        fetch(`${API_BASE}/alerts/`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                target_value: domain,
-                                reason: `Trẻ cố truy cập "${domain}" (${aiInfo.category || 'Web lạ'}) nhưng bị chặn: ${checkResult.reason}`,
-                                is_web: true
-                            })
-                        }).catch(() => {});
-                    }
-                }
-            } catch (err) {
-                let fullUrl = rawVal.startsWith("http") ? rawVal : `https://${domain}`;
-                window.open(fullUrl, '_blank');
-            }
-        }
-
-        function requestStrangeWebPermission() {
-            if (!pendingStrangeTarget) return;
-            switchChildTab('request');
-            switchFormTab('unlock');
-            document.getElementById("unlock-type").value = "WEBSITE";
-            document.getElementById("unlock-target").value = pendingStrangeTarget;
-            document.getElementById("unlock-reason").value = `Con muốn vào trang "${pendingStrangeTarget}" để học tập và giải trí, mong cha mẹ duyệt cho con nhé!`;
+            showToast("Không thể kiểm tra quyền truy cập. Hãy thử lại khi có kết nối.", "rose");
         }
 
         // --- QUẢN LÝ HỒ SƠ CON CÁI & ĐĂNG NHẬP MÁY ---
         let currentChild = null;
-        let allChildrenList = [];
         let pendingLoginChildId = null;
 
         async function fetchActiveChild() {
@@ -768,46 +610,44 @@ let API_BASE = "http://127.0.0.1:8008";
                 const res = await fetch(`${API_BASE}/children/active`);
                 if (res.ok) {
                     currentChild = await res.json();
-                    document.getElementById("child-avatar").textContent = currentChild.avatar || "🧒";
-                    document.getElementById("child-name").textContent = currentChild.name || "Bé An";
+                    if (currentChild && currentChild.name) {
+                        document.getElementById("child-avatar").textContent = currentChild.avatar || "🧒";
+                        document.getElementById("child-name").textContent = currentChild.name;
+                    } else {
+                        document.getElementById("child-avatar").textContent = "🧒";
+                        document.getElementById("child-name").textContent = "Chưa có hồ sơ";
+                    }
                 }
             } catch (e) {}
         }
 
         async function openChildLoginModal() {
+            const list = document.getElementById("child-login-list");
+            const box = document.getElementById("pin-login-box");
+            box.classList.add("hidden");
+            pendingLoginChildId = null;
+            document.getElementById("childPinInput").value = "";
+            document.getElementById("child-login-modal").classList.remove("hidden");
+            list.textContent = "Đang tải hồ sơ…";
             try {
-                const res = await fetch(`${API_BASE}/children/`);
-                if (res.ok) {
-                    allChildrenList = await res.json();
-                    const listEl = document.getElementById("child-login-list");
-                    listEl.innerHTML = allChildrenList.map(c => `
-                        <div onclick="selectChildToLogin(${c.id}, '${c.name}', '${c.pin || ''}')" class="cursor-pointer p-4 rounded-2xl border-2 ${currentChild && currentChild.id === c.id ? 'border-blue-500 bg-blue-50/70' : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'} text-center transition flex flex-col items-center gap-1.5 shadow-xs">
-                            <span class="text-4xl p-2 bg-white rounded-2xl shadow-xs border border-slate-100">${c.avatar || '🧒'}</span>
-                            <span class="font-bold text-xs text-slate-800">${c.name}</span>
-                            <span class="text-[10px] text-slate-500">${c.age} tuổi</span>
-                            ${currentChild && currentChild.id === c.id ? '<span class="text-[9px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full mt-1">Đang đăng nhập</span>' : ''}
-                        </div>
-                    `).join("");
-                    document.getElementById("pin-login-box").classList.add("hidden");
-                    document.getElementById("childPinInput").value = "";
-                    document.getElementById("child-login-modal").classList.remove("hidden");
+                const res = await fetch(`${API_BASE}/children/assigned`, { headers: enrollmentHeaders() });
+                if (!res.ok) {
+                    list.textContent = "Hãy mở Góc Của Con từ Agent trên máy đã ghép nối.";
+                    return;
                 }
-            } catch (e) {}
+                const child = await res.json();
+                pendingLoginChildId = child.id;
+                list.textContent = `${child.avatar} ${child.name}`;
+                document.getElementById("pin-prompt-text").textContent = "Nhập mã PIN để đăng nhập";
+                box.classList.remove("hidden");
+                document.getElementById("childPinInput").focus();
+            } catch (error) {
+                list.textContent = "Không thể kết nối máy chủ.";
+            }
         }
 
         function closeChildLoginModal() {
             document.getElementById("child-login-modal").classList.add("hidden");
-        }
-
-        function selectChildToLogin(childId, name, pin) {
-            if (!pin) {
-                doChildLogin(childId, "");
-            } else {
-                pendingLoginChildId = childId;
-                document.getElementById("pin-prompt-text").innerText = `Nhập mã PIN để đăng nhập với tư cách ${name}:`;
-                document.getElementById("pin-login-box").classList.remove("hidden");
-                document.getElementById("childPinInput").focus();
-            }
         }
 
         async function submitChildPinLogin() {
@@ -820,7 +660,7 @@ let API_BASE = "http://127.0.0.1:8008";
             try {
                 const res = await fetch(`${API_BASE}/children/login`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json", ...enrollmentHeaders() },
                     body: JSON.stringify({ child_id: childId, pin: pin })
                 });
                 if (res.ok) {
@@ -829,7 +669,10 @@ let API_BASE = "http://127.0.0.1:8008";
                     showToast(`🎉 ${data.message}`, "emerald");
                     countdownSeconds = -1;
                     lastServerDailyLimit = null;
-                    fetchActiveChild();
+                    await fetchActiveChild();
+                    initWebSocket();
+                    fetchAllowedRules();
+                    fetchChildRequests();
                     fetchUsageStats();
                 } else {
                     const err = await res.json();
@@ -1087,7 +930,7 @@ let API_BASE = "http://127.0.0.1:8008";
                     <tr class="hover:bg-slate-50">
                         <td class="py-2.5 font-semibold text-slate-800 flex items-center gap-2">
                             <span>${item.icon || '📱'}</span>
-                            <span>${item.app_name}</span>
+                            <span>${escapeHtml(item.app_name)}</span>
                         </td>
                         <td class="py-2.5">
                             <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${item.badge_color}">
@@ -1104,96 +947,6 @@ let API_BASE = "http://127.0.0.1:8008";
 
             } catch (err) {
                 console.error("Lỗi nạp usage stats:", err);
-            }
-        }
-
-        // --- TẢI DANH SÁCH VIỆC TỐT (GAMIFICATION) ---
-        async function fetchTasks() {
-            try {
-                const res = await fetch(`${API_BASE}/tasks/`);
-                if (!res.ok) return;
-                const tasks = await res.json();
-                const container = document.getElementById("tasks-list");
-                const navBadge = document.getElementById("nav-tasks-badge");
-
-                if (navBadge) {
-                    const activeCount = tasks.filter(t => t.status === "TODO").length;
-                    if (activeCount > 0) {
-                        navBadge.textContent = activeCount;
-                        navBadge.classList.remove("hidden");
-                    } else {
-                        navBadge.classList.add("hidden");
-                    }
-                }
-
-                if (tasks.length === 0) {
-                    container.innerHTML = `
-                        <div class="p-8 text-center text-slate-400 text-xs">
-                            <span class="text-4xl block mb-2">🌟</span>
-                            Hiện tại chưa có nhiệm vụ nào. Con hãy nhờ cha mẹ giao việc tốt ở Trạm điều khiển nhé!
-                        </div>
-                    `;
-                    return;
-                }
-
-                container.innerHTML = tasks.map(t => {
-                    let actionHtml = "";
-                    if (t.status === "TODO") {
-                        actionHtml = `
-                            <button onclick="markTaskDone(${t.id})" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1">
-                                <span>Báo đã làm xong</span> 🏆
-                            </button>
-                        `;
-                    } else if (t.status === "COMPLETED_WAITING_APPROVAL") {
-                        actionHtml = `
-                            <span class="px-3 py-1 bg-amber-100 text-amber-800 rounded-xl text-xs font-semibold">
-                                Đang chờ cha mẹ duyệt ⏳
-                            </span>
-                        `;
-                    } else if (t.status === "APPROVED") {
-                        actionHtml = `
-                            <span class="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold">
-                                Đã nhận +${t.reward_minutes} phút 🎉
-                            </span>
-                        `;
-                    }
-
-                    return `
-                        <div class="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:bg-slate-100/70 transition">
-                            <div class="flex items-center gap-3">
-                                <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-lg font-bold">
-                                    +${t.reward_minutes}p
-                                </div>
-                                <div>
-                                    <div class="font-bold text-xs text-slate-800">${t.title}</div>
-                                    <div class="text-[11px] text-slate-400 mt-0.5">${t.description || "Làm tốt để nhận thêm giờ chơi!"}</div>
-                                </div>
-                            </div>
-                            <div>
-                                ${actionHtml}
-                            </div>
-                        </div>
-                    `;
-                }).join("");
-
-            } catch (err) {
-                console.error("Lỗi nạp tasks:", err);
-            }
-        }
-
-        async function markTaskDone(taskId) {
-            try {
-                const res = await fetch(`${API_BASE}/tasks/${taskId}/complete`, {
-                    method: "PATCH"
-                });
-                if (res.ok) {
-                    showToast("🎉 Giỏi lắm! Đã báo hoàn thành việc tốt cho Cha Mẹ.", "amber");
-                    fetchTasks();
-                } else {
-                    alert("Không thể cập nhật việc tốt.");
-                }
-            } catch (err) {
-                alert("Lỗi kết nối máy chủ!");
             }
         }
 
@@ -1225,6 +978,8 @@ let API_BASE = "http://127.0.0.1:8008";
                     let statusBadge = "";
                     if (r.status === "APPROVED") {
                         statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ ĐÃ ĐỒNG Ý</span>`;
+                    } else if (r.status === "EXPIRED") {
+                        statusBadge = '<span class="text-xs text-slate-500">Đã hết hạn</span>';
                     } else if (r.status === "REJECTED") {
                         statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">❌ CHƯA ĐỒNG Ý</span>`;
                     } else {
@@ -1234,16 +989,16 @@ let API_BASE = "http://127.0.0.1:8008";
                     return `
                         <div class="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
                             <div class="flex items-center justify-between">
-                                <span class="font-bold text-xs text-slate-800">${r.target_detail}</span>
+                                <span class="font-bold text-xs text-slate-800">${escapeHtml(r.target_detail)}</span>
                                 ${statusBadge}
                             </div>
                             <div class="text-[11px] text-slate-500 italic">
-                                "Lý do của con: ${r.reason_from_child || 'Không có lý do'}"
+                                "Lý do của con: ${escapeHtml(r.reason_from_child || 'Không có lý do')}"
                             </div>
                             ${r.parent_feedback ? `
                                 <div class="mt-1 pt-1.5 border-t border-slate-200 text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
                                     <span>💬 Cha Mẹ dặn:</span>
-                                    <span>"${r.parent_feedback}"</span>
+                                    <span>"${escapeHtml(r.parent_feedback)}"</span>
                                 </div>
                             ` : ''}
                         </div>
@@ -1259,12 +1014,12 @@ let API_BASE = "http://127.0.0.1:8008";
         window.addEventListener("DOMContentLoaded", async () => {
             updateSoundUI();
             initCountdownTicker();
-            await autoDetectBackendPort();
+            showBackendAddress();
+            await fetchActiveChild();
             initWebSocket();
-            fetchActiveChild();
+            if (!currentChild) openChildLoginModal();
             fetchAllowedRules();
             fetchUsageStats();
-            fetchTasks();
             fetchChildRequests();
 
             // Định kỳ cập nhật dữ liệu ngầm mỗi 10 giây
