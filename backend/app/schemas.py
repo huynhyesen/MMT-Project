@@ -1,11 +1,11 @@
-from pydantic import BaseModel, ConfigDict
-from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal, Optional, List
 from datetime import datetime
 
 class TelemetryCreate(BaseModel):
     app_name: str
     domain: Optional[str] = None
-    duration_seconds: int
+    duration_seconds: int = Field(ge=0)
 
 class ChildRequestCreate(BaseModel):
     request_type: str # 'PERMISSION_WEB', 'PERMISSION_APP', 'TIME_EXTENSION'
@@ -16,6 +16,7 @@ class ChildRequestCreate(BaseModel):
 
 class ChildRequestResponse(BaseModel):
     id: int
+    child_name: Optional[str] = None
     request_type: str
     target_detail: Optional[str] = None
     reason_from_child: Optional[str] = None
@@ -26,7 +27,7 @@ class ChildRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class RequestActionUpdate(BaseModel):
-    status: str # "APPROVED" hoặc "REJECTED"
+    status: Literal["APPROVED", "REJECTED"]
     parent_feedback: Optional[str] = None
 
 # Schemas cho Thống kê thời gian sử dụng & Giới hạn thời gian
@@ -102,11 +103,12 @@ class OnboardingSetupRequest(BaseModel):
 
 # Schemas cho Hồ sơ trẻ em & Đăng nhập máy
 class ChildProfileCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=100)
+    device_name: Optional[str] = Field(default=None, max_length=100)
     avatar: Optional[str] = "🧒"
-    age: Optional[int] = 10
-    pin: Optional[str] = "1234"
-    daily_limit_minutes: Optional[int] = 120
+    age: int = Field(default=10, ge=4, le=18)
+    pin: str = Field(pattern=r"^[0-9]{4}$")
+    daily_limit_minutes: int = Field(default=120, ge=1, le=1440)
 
 class ChildProfileResponse(BaseModel):
     id: int
@@ -116,13 +118,14 @@ class ChildProfileResponse(BaseModel):
     daily_limit_minutes: int
     is_active: bool
     created_at: Optional[datetime] = None
+    device: Optional["DeviceResponse"] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class ChildLoginRequest(BaseModel):
     child_id: int
-    pin: str
+    pin: str = Field(pattern=r"^[0-9]{4}$")
 
 # Schemas cho Cảnh báo truy cập web lạ / chưa phép & AI Content Filter
 class AlertLogCreate(BaseModel):
@@ -174,6 +177,7 @@ class DeviceResponse(BaseModel):
     device_name: str
     device_hwid: Optional[str] = None
     pairing_code: Optional[str] = None
+    pairing_expires_at: Optional[datetime] = None
     is_paired: bool
     status: str
     child_profile_id: Optional[int] = None
@@ -201,6 +205,10 @@ class DeviceConfigResponse(BaseModel):
     anti_tamper_enabled: bool = True
     content_filter_enabled: bool = True
 
+class DevicePairResponse(DeviceConfigResponse):
+    device_credential: str
+
+
 # Schemas cho AI Content Filter
 class ContentFilterAnalysisRequest(BaseModel):
     text_content: Optional[str] = None
@@ -215,3 +223,6 @@ class ContentFilterResult(BaseModel):
     reason: Optional[str] = None
     suggested_action: str = "ALLOW" # 'ALLOW', 'BLOCK_AND_CLOSE', 'WARN'
 
+
+
+ChildProfileResponse.model_rebuild()

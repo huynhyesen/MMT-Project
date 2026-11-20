@@ -1,5 +1,4 @@
 import json
-from collections import defaultdict
 from typing import Optional
 
 from fastapi import WebSocket
@@ -24,6 +23,14 @@ class ConnectionManager:
             for ws, connected_id in self.active_connections.items()
             if connected_id == device_id
         ]
+
+    async def close_device(self, device_id: str):
+        for websocket in self.get_connections(device_id):
+            self.disconnect(websocket)
+            try:
+                await websocket.close(code=1008)
+            except (RuntimeError, OSError):
+                pass
 
     async def send_to_device(self, device_id: str, data: dict) -> bool:
         """Gửi message đến các kết nối thuộc đúng device_id."""

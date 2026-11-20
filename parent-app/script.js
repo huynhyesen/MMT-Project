@@ -1,13 +1,12 @@
-let API_BASE = "http://127.0.0.1:8008";
-        let WS_URL = "ws://127.0.0.1:8008/ws/agent/parent_dashboard";
+let selectedChildId = null;
+function consoleFetch(url, options = {}) {
+    const headers = new Headers(options.headers);
+    headers.set("X-MMT-Console", "parent");
+    return fetch(url, { ...options, headers });
+}
 
-        if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-            const host = window.location.hostname || "127.0.0.1";
-            const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
-            const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-            API_BASE = `${window.location.protocol}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-            WS_URL = `${wsProto}//${host}${window.location.port ? ':' + window.location.port : ''}/ws/agent/parent_dashboard`;
-        }
+const API_BASE = location.origin;
+const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         let ws = null;
         let cachedUsageItems = [];
@@ -125,7 +124,6 @@ let API_BASE = "http://127.0.0.1:8008";
             'rules': { title: '🛡️ Quản Lý Quy Tắc Web / App', desc: 'Danh sách các trang web / phần mềm đang được Cho phép hoặc Chặn' },
             'curfew': { title: '🌙 Khung Giờ Giới Nghiêm', desc: 'Tự động vô hiệu hóa máy ban đêm và mở lại vào sáng hôm sau' },
             'alerts': { title: '🚨 Nhật Ký Cảnh Báo & Lọc AI', desc: 'Phát hiện nội dung không phù hợp qua AI và cảnh báo can thiệp Anti-Tamper' },
-            'devices': { title: '💻 Quản Lý Thiết Bị & Ghép Nối (Cloud WAN)', desc: 'Ghép nối máy con từ xa theo mã HWID, điều khiển qua Cloud Relay và bảo vệ chống tắt' },
             'reset': { title: '🔄 Cài Đặt & Đặt Lại Hệ Thống', desc: 'Đặt lại thời gian về 0, làm sạch hộp thư hoặc khôi phục cài đặt gốc' }
         };
 
@@ -156,54 +154,13 @@ let API_BASE = "http://127.0.0.1:8008";
             if (nav) nav.classList.toggle('hidden');
         }
 
-        async function autoDetectBackendPort() {
-            if (window.location.protocol === "file:") {
-                const ports = [8008, 8000, 8001, 8080];
-                for (const p of ports) {
-                    try {
-                        const res = await fetch(`http://127.0.0.1:${p}/`, { signal: AbortSignal.timeout(400) });
-                        if (res.ok) {
-                            API_BASE = `http://127.0.0.1:${p}`;
-                            WS_URL = `ws://127.0.0.1:${p}/ws/agent/parent_dashboard`;
-                            const customInput = document.getElementById("custom-backend-url");
-                            if (customInput) customInput.value = API_BASE;
-                            return true;
-                        }
-                    } catch (e) {}
-                }
-            }
-            return false;
-        }
-
-        function changeBackendUrl() {
-            const input = document.getElementById("custom-backend-url");
-            if (input && input.value.trim()) {
-                let target = input.value.trim();
-                if (!target.startsWith("http")) target = "http://" + target;
-                API_BASE = target;
-                const wsHost = target.replace("http://", "").replace("https://", "");
-                WS_URL = `ws://${wsHost}/ws/agent/parent_dashboard`;
-            }
-            initWebSocket();
-            fetchRequests();
-            fetchUsageStats();
-            fetchRules();
-            fetchChildren();
-            fetchCurfew();
-            fetchAlerts();
-            fetchDevices();
-        }
-
         function showServerNotice(show) {
             const banner = document.getElementById("server-offline-banner");
             if (banner) {
                 if (show) banner.classList.remove("hidden");
                 else banner.classList.add("hidden");
             }
-            const customInput = document.getElementById("custom-backend-url");
-            if (customInput && !customInput.value) {
-                customInput.value = API_BASE;
-            }
+
         }
 
         function initWebSocket() {
@@ -244,11 +201,11 @@ let API_BASE = "http://127.0.0.1:8008";
                                 playNotificationSound('ting');
                                 showToast(`🎉 Thiết bị "${data.device_name}" đã ghép nối thành công!`, "success");
                             }
-                            fetchDevices();
+                            fetchChildren();
                         } else if (data.type === "PROFILES_UPDATED" || data.type === "CHILD_SWITCHED") {
                             fetchChildren();
                             fetchUsageStats();
-                            fetchDevices();
+                            fetchChildren();
                         } else if (data.type === "CURFEW_UPDATED") {
                             fetchCurfew();
                         } else if (data.type === "RULES_UPDATED") {
@@ -258,7 +215,10 @@ let API_BASE = "http://127.0.0.1:8008";
                             fetchRequests();
                             fetchRules();
                             fetchUsageStats();
-                        } else if (data.type === "USAGE_RESET" || data.type === "DAILY_RESET_TRIGGERED" || data.type === "DAILY_RESET") {
+                        } else if (data.type === "USAGE_RESET") {
+                            fetchUsageStats();
+                            fetchRules();
+                        } else if (data.type === "DAILY_RESET_TRIGGERED" || data.type === "DAILY_RESET") {
                             fetchUsageStats();
                             fetchRules();
                             fetchRequests();
@@ -294,71 +254,36 @@ let API_BASE = "http://127.0.0.1:8008";
             if (type === "danger") bg = "bg-rose-600";
 
             toast.className = `toast ${bg} text-white px-4 py-3 rounded-xl shadow-lg flex justify-between items-center text-xs md:text-sm`;
-            toast.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove()" class="text-white hover:text-slate-200 ml-4 font-bold text-base">&times;</button>`;
+            toast.innerHTML = `<span>${escapeHtml(message)}</span><button onclick="this.parentElement.remove()" class="text-white hover:text-slate-200 ml-4 font-bold text-base">&times;</button>`;
             container.appendChild(toast);
             setTimeout(() => toast.remove(), 8000);
         }
 
+        function selectedMachine() {
+            return currentChildren.find(child => child.id === selectedChildId)?.device?.device_hwid;
+        }
+
         function sendLockCommand() {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "LOCK_MACHINE" }));
-                showToast("🔒 Đã gửi lệnh khóa máy đến con!", "info");
-            } else {
-                fetch(`${API_BASE}/control/lock`, { method: "POST" })
-                    .then(() => showToast("🔒 Đã gửi lệnh khóa máy đến con!", "info"))
-                    .catch(() => alert("Chưa kết nối được máy chủ!"));
-            }
+            return sendRemoteDeviceCommand(selectedMachine(), "LOCK_MACHINE");
         }
 
         function sendUnlockCommand() {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "UNLOCK_MACHINE" }));
-                showToast("🔓 Đã gửi lệnh mở khóa máy cho con!", "success");
-            } else {
-                fetch(`${API_BASE}/control/unlock`, { method: "POST" })
-                    .then(() => showToast("🔓 Đã gửi lệnh mở khóa máy cho con!", "success"))
-                    .catch(() => alert("Chưa kết nối được máy chủ!"));
-            }
+            return sendRemoteDeviceCommand(selectedMachine(), "UNLOCK_MACHINE");
+        }
+
+        async function sendMessageFrom(inputId) {
+            const input = document.getElementById(inputId);
+            const message = input.value.trim();
+            if (!message) return;
+            if (await sendRemoteDeviceCommand(selectedMachine(), "MESSAGE", { message })) input.value = "";
         }
 
         function sendMessageToChild() {
-            const input = document.getElementById("parent-message-input");
-            const msg = input.value.trim();
-            if (!msg) return alert("Vui lòng nhập lời nhắn!");
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "PARENT_MESSAGE", message: msg }));
-                showToast(`💬 Đã gửi lời nhắn: "${msg}"`, "info");
-                input.value = "";
-            } else {
-                fetch(`${API_BASE}/control/message`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ message: msg })
-                }).then(() => {
-                    showToast(`💬 Đã gửi lời nhắn: "${msg}"`, "info");
-                    input.value = "";
-                }).catch(() => alert("Chưa kết nối được máy chủ!"));
-            }
+            return sendMessageFrom("parent-message-input");
         }
 
         function sendQuickMessage() {
-            const input = document.getElementById("parent-quick-msg");
-            const msg = input.value.trim();
-            if (!msg) return alert("Vui lòng nhập lời nhắn!");
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "PARENT_MESSAGE", message: msg }));
-                showToast(`💬 Đã gửi lời nhắn: "${msg}"`, "info");
-                input.value = "";
-            } else {
-                fetch(`${API_BASE}/control/message`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ message: msg })
-                }).then(() => {
-                    showToast(`💬 Đã gửi lời nhắn: "${msg}"`, "info");
-                    input.value = "";
-                }).catch(() => alert("Chưa kết nối được máy chủ!"));
-            }
+            return sendMessageFrom("parent-quick-msg");
         }
 
         async function fetchRequests() {
@@ -367,7 +292,7 @@ let API_BASE = "http://127.0.0.1:8008";
             const overviewPendingReq = document.getElementById("overview-pending-req");
 
             try {
-                const response = await fetch(`${API_BASE}/requests/`);
+                const response = await consoleFetch(`${API_BASE}/requests/`);
                 if (!response.ok) throw new Error("HTTP error " + response.status);
                 const data = await response.json();
                 container.innerHTML = "";
@@ -428,7 +353,7 @@ let API_BASE = "http://127.0.0.1:8008";
                     } else if (req.parent_feedback) {
                         actionHtml = `
                             <div class="mt-2 text-xs text-slate-600 bg-white p-2 rounded-lg border border-slate-200">
-                                <span class="font-semibold text-slate-700">Lời nhắn từ Phụ huynh:</span> "${req.parent_feedback}"
+                                <span class="font-semibold text-slate-700">Lời nhắn từ Phụ huynh:</span> "${escapeHtml(req.parent_feedback)}"
                             </div>
                         `;
                     }
@@ -436,20 +361,20 @@ let API_BASE = "http://127.0.0.1:8008";
                     card.innerHTML = `
                         <div class="flex items-start justify-between gap-2">
                             <div>
-                                <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">${typeLabel}</span>
-                                <h4 class="font-bold text-slate-800 text-sm mt-0.5">${req.target_detail}</h4>
+                                <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">${typeLabel} · ${escapeHtml(req.child_name || "Hồ sơ cũ")}</span>
+                                <h4 class="font-bold text-slate-800 text-sm mt-0.5">${escapeHtml(req.target_detail)}</h4>
                             </div>
                             <div>${statusBadge}</div>
                         </div>
                         <p class="text-xs text-slate-600 mt-2 bg-white p-2.5 rounded-lg border border-slate-100">
-                            <span class="font-semibold text-slate-700">Lý do của con:</span> ${req.reason_from_child}
+                            <span class="font-semibold text-slate-700">Lý do của con:</span> ${escapeHtml(req.reason_from_child)}
                         </p>
                         ${actionHtml}
                     `;
                     container.appendChild(card);
                 });
             } catch (error) {
-                container.innerHTML = `<p class="text-rose-500 text-xs py-4 text-center">Lỗi khi tải dữ liệu: ${error.message}</p>`;
+                container.innerHTML = `<p class="text-rose-500 text-xs py-4 text-center">Lỗi khi tải dữ liệu: ${escapeHtml(error.message)}</p>`;
             }
         }
 
@@ -458,7 +383,7 @@ let API_BASE = "http://127.0.0.1:8008";
             const feedback = feedbackInput ? feedbackInput.value.trim() : "";
 
             try {
-                const response = await fetch(`${API_BASE}/requests/${requestId}`, {
+                const response = await consoleFetch(`${API_BASE}/requests/${requestId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -538,7 +463,7 @@ let API_BASE = "http://127.0.0.1:8008";
         async function fetchUsageStats() {
             const listEl = document.getElementById("usage-list");
             try {
-                const response = await fetch(`${API_BASE}/usage-stats/`);
+                const response = await consoleFetch(`${API_BASE}/usage-stats/${selectedChildId ? "?child_id=" + selectedChildId : ""}`);
                 const data = await response.json();
 
                 document.getElementById("stat-total-time").innerText = data.total_formatted;
@@ -553,7 +478,7 @@ let API_BASE = "http://127.0.0.1:8008";
                 cachedUsageItems = data.items || [];
                 renderUsageList(cachedUsageItems);
             } catch (error) {
-                if (listEl) listEl.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center">Lỗi khi tải báo cáo: ${error.message}</p>`;
+                if (listEl) listEl.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center">Lỗi khi tải báo cáo: ${escapeHtml(error.message)}</p>`;
             }
         }
 
@@ -599,7 +524,7 @@ let API_BASE = "http://127.0.0.1:8008";
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <div class="flex items-center gap-2">
                             <span class="text-lg">${item.icon}</span>
-                            <span class="font-bold text-slate-800 text-xs md:text-sm">${item.app_name}</span>
+                            <span class="font-bold text-slate-800 text-xs md:text-sm">${escapeHtml(item.app_name)}</span>
                             <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${item.badge_color}">${item.category}</span>
                         </div>
                         <div class="flex flex-wrap items-center gap-2 text-xs">
@@ -608,7 +533,7 @@ let API_BASE = "http://127.0.0.1:8008";
                             <span class="text-[11px] px-2.5 py-0.5 rounded-full border ${remColor}">
                                 ${item.is_expired ? '🛑 Đã hết giờ (0p)' : '⏳ ' + item.remaining_formatted}
                             </span>
-                            <button onclick="openLimitModal('${item.app_name}', ${item.time_limit_minutes})" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 bg-white border border-blue-200 rounded-lg shadow-xs">
+                            <button data-argument="${escapeHtml(item.app_name)}" onclick="openLimitModal(this.dataset.argument, ${item.time_limit_minutes})" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 bg-white border border-blue-200 rounded-lg shadow-xs">
                                 ⚙️ Đặt hạn mức
                             </button>
                         </div>
@@ -617,12 +542,12 @@ let API_BASE = "http://127.0.0.1:8008";
                     <div class="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-200/50">
                         <div class="flex items-center gap-1 text-[11px] text-slate-500">
                             <span>⚡ Tự điền nhanh:</span>
-                            <button onclick="setQuickLimit('${item.app_name}', 30)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">30p</button>
-                            <button onclick="setQuickLimit('${item.app_name}', 45)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">45p</button>
-                            <button onclick="setQuickLimit('${item.app_name}', 60)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">60p</button>
-                            <button onclick="setQuickLimit('${item.app_name}', 90)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">90p</button>
-                            <button onclick="setQuickLimit('${item.app_name}', 120)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">120p</button>
-                            <button onclick="setQuickLimit('${item.app_name}', 0)" class="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-semibold text-slate-500">Không GH</button>
+                            <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 30)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">30p</button>
+                            <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 45)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">45p</button>
+                            <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 60)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">60p</button>
+                            <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 90)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">90p</button>
+                            <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 120)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">120p</button>
+                            <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 0)" class="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-semibold text-slate-500">Không GH</button>
                         </div>
                         <div class="flex items-center gap-2 flex-1 max-w-xs">
                             <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden flex-1">
@@ -638,7 +563,7 @@ let API_BASE = "http://127.0.0.1:8008";
 
         async function setQuickLimit(targetName, mins) {
             try {
-                const res = await fetch(`${API_BASE}/rules/`, {
+                const res = await consoleFetch(`${API_BASE}/rules/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -683,7 +608,7 @@ let API_BASE = "http://127.0.0.1:8008";
 
         async function fetchCurfew() {
             try {
-                const res = await fetch(`${API_BASE}/curfew/`);
+                const res = await consoleFetch(`${API_BASE}/curfew/`);
                 if (res.ok) {
                     const data = await res.json();
                     document.getElementById("curfew-bedtime-input").value = data.bedtime;
@@ -729,7 +654,7 @@ let API_BASE = "http://127.0.0.1:8008";
             const bedtime = document.getElementById("curfew-bedtime-input").value || "22:00";
             const wakeup = document.getElementById("curfew-wakeup-input").value || "06:00";
             try {
-                const res = await fetch(`${API_BASE}/curfew/`, {
+                const res = await consoleFetch(`${API_BASE}/curfew/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ bedtime: bedtime, wakeup_time: wakeup })
@@ -751,17 +676,18 @@ let API_BASE = "http://127.0.0.1:8008";
             const overviewChild = document.getElementById("overview-child-name");
 
             try {
-                const res = await fetch(`${API_BASE}/children/`);
+                const res = await consoleFetch(`${API_BASE}/children/`);
                 if (!res.ok) return;
                 currentChildren = await res.json();
 
                 const overviewStatus = document.getElementById("overview-child-status");
-                const active = currentChildren.find(c => c.is_active) || currentChildren[0];
+                const active = currentChildren.find(c => c.id === selectedChildId) || currentChildren[0];
+                selectedChildId = active?.id ?? null;
                 if (active) {
                     if (headerActive) headerActive.textContent = `${active.avatar || '🧒'} ${active.name}`;
                     if (overviewChild) overviewChild.textContent = `${active.avatar || '🧒'} ${active.name}`;
                     if (overviewStatus) {
-                        overviewStatus.textContent = "Đang hoạt động";
+                        overviewStatus.textContent = active.device?.is_paired ? "Đã ghép nối" : "Chờ ghép nối";
                         overviewStatus.className = "text-[10px] text-emerald-600 font-semibold";
                     }
                 } else {
@@ -787,43 +713,34 @@ let API_BASE = "http://127.0.0.1:8008";
                     return;
                 }
 
-                container.innerHTML = currentChildren.map(c => `
-                    <div class="p-4 rounded-2xl border ${c.is_active ? 'bg-blue-50/70 border-blue-400 ring-2 ring-blue-300/40' : 'bg-slate-50 border-slate-200'} flex flex-col justify-between gap-3 transition">
-                        <div class="flex items-center gap-3">
-                            <div class="text-3xl p-2 bg-white rounded-2xl shadow-xs border border-slate-100 flex items-center justify-center w-12 h-12">
-                                ${c.avatar || '🧒'}
-                            </div>
-                            <div>
-                                <div class="flex items-center gap-1.5">
-                                    <span class="font-bold text-slate-800 text-sm">${c.name}</span>
-                                    ${c.is_active ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-600 text-white animate-pulse">Đang dùng máy</span>' : ''}
-                                </div>
-                                <div class="text-[11px] text-slate-500 mt-0.5">
-                                    ${c.age} tuổi • Hạn mức: <strong>${c.daily_limit_minutes} phút</strong>
-                                </div>
-                                <div class="text-[10px] text-slate-400">
-                                    Mã PIN: <span class="font-mono bg-slate-200/80 px-1.5 py-0.5 rounded text-slate-700 font-bold">${c.pin || 'Không có'}</span>
+                container.innerHTML = currentChildren.map(c => {
+                    const d = c.device;
+                    const paired = d?.is_paired;
+                    const selected = c.id === selectedChildId;
+                    return `
+                        <article class="p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
+                            <div class="flex items-center gap-3">
+                                <span class="text-3xl">${escapeHtml(c.avatar || "🧒")}</span>
+                                <div>
+                                    <h3 class="font-bold text-sm">${escapeHtml(c.name)}</h3>
+                                    <p class="text-xs text-slate-600">${c.age} tuổi · ${c.daily_limit_minutes} phút/ngày</p>
                                 </div>
                             </div>
-                        </div>
-                        <div class="flex items-center gap-2 pt-2 border-t border-slate-200/60">
-                            ${!c.is_active ? `
-                                <button onclick="selectChild(${c.id})" class="flex-1 py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold transition">
-                                    Đổi sang trẻ này 🔄
-                                </button>
-                            ` : `
-                                <span class="flex-1 py-1.5 text-center text-blue-700 text-xs font-semibold">Tài khoản hiện tại 💻</span>
-                            `}
-                            ${currentChildren.length > 1 ? `
-                                <button onclick="deleteChild(${c.id})" class="text-rose-500 hover:text-rose-700 p-1.5 text-xs rounded-lg hover:bg-rose-50 transition" title="Xóa hồ sơ">
-                                    🗑️
-                                </button>
-                            ` : ''}
-                        </div>
-                    </div>
-                `).join("");
+                            <p class="text-xs">${escapeHtml(d?.device_name || "Chưa có thiết bị")} · ${paired ? "Đã ghép nối" : "Chờ ghép nối"}</p>
+                            <div class="flex flex-wrap gap-2">
+                                <button onclick="selectChild(${c.id})" class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs">${selected ? "Đang xem báo cáo" : "Xem báo cáo"}</button>
+                                <button onclick="showChildPairing(${c.id})" class="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-800 text-xs">${paired ? "Đổi máy" : "Mã ghép nối"}</button>
+                                ${paired ? `
+                                    <button data-hwid="${escapeHtml(d.device_hwid)}" onclick="sendRemoteDeviceCommand(this.dataset.hwid, 'LOCK_MACHINE')" class="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-900 text-xs">Khóa</button>
+                                    <button data-hwid="${escapeHtml(d.device_hwid)}" onclick="sendRemoteDeviceCommand(this.dataset.hwid, 'UNLOCK_MACHINE')" class="px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-900 text-xs">Mở khóa</button>
+                                    <button data-hwid="${escapeHtml(d.device_hwid)}" onclick="promptSendMessage(this.dataset.hwid)" class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs">Nhắn</button>
+                                ` : ""}
+                                <button onclick="deleteChild(${c.id})" class="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 text-xs">Xóa hồ sơ</button>
+                            </div>
+                        </article>`;
+                }).join("");
             } catch (e) {
-                if (container) container.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center col-span-full">Lỗi nạp hồ sơ: ${e.message}</p>`;
+                if (container) container.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center col-span-full">Lỗi nạp hồ sơ: ${escapeHtml(e.message)}</p>`;
             }
         }
 
@@ -847,12 +764,13 @@ let API_BASE = "http://127.0.0.1:8008";
             e.preventDefault();
             const name = document.getElementById("cpName").value.trim();
             const age = parseInt(document.getElementById("cpAge").value, 10) || 10;
-            const pin = document.getElementById("cpPin").value.trim() || "1234";
+            const pin = document.getElementById("cpPin").value;
+            const deviceName = document.getElementById("cpDevice").value.trim();
             const avatar = document.getElementById("cpAvatar").value || "🧒";
             const limit = parseInt(document.getElementById("cpLimit").value, 10) || 120;
 
             try {
-                const res = await fetch(`${API_BASE}/children/`, {
+                const res = await consoleFetch(`${API_BASE}/children/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -860,39 +778,65 @@ let API_BASE = "http://127.0.0.1:8008";
                         avatar: avatar,
                         age: age,
                         pin: pin,
+                        device_name: deviceName || null,
                         daily_limit_minutes: limit
                     })
                 });
-                if (res.ok) {
-                    closeChildProfileModal();
-                    showToast(`👶 Đã tạo hồ sơ cho bé "${name}" thành công!`, "success");
-                    fetchChildren();
-                }
+                const data = await res.json();
+                if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Kiểm tra lại tên và mã PIN 4 số.");
+                e.target.reset();
+                closeChildProfileModal();
+                showPairingCode(data.device);
+                await fetchChildren();
+                fetchUsageStats();
             } catch (err) {
                 alert("Lỗi lưu hồ sơ: " + err.message);
             }
         }
 
-        async function selectChild(childId) {
-            try {
-                const res = await fetch(`${API_BASE}/children/select/${childId}`, { method: "POST" });
-                if (res.ok) {
-                    showToast("🔄 Đã chuyển tài khoản trẻ thành công!", "success");
-                    fetchChildren();
-                    fetchUsageStats();
-                }
-            } catch (err) {
-                alert("Lỗi chuyển tài khoản: " + err.message);
+        function showPairingCode(device) {
+            document.getElementById("generated-pairing-code").textContent = device.pairing_code;
+            const hostname = new URL(API_BASE).hostname;
+            document.getElementById("pairing-server").textContent =
+                ["localhost", "127.0.0.1", "[::1]"].includes(hostname)
+                    ? "Dùng địa chỉ IP mạng LAN của máy phụ huynh khi ghép nối từ máy khác."
+                    : API_BASE;
+            document.getElementById("pairing-dialog").showModal();
+        }
+
+        async function showChildPairing(childId) {
+            const device = currentChildren.find(c => c.id === childId)?.device;
+            if (device?.is_paired && !confirm("Đổi máy sẽ ngắt kết nối máy hiện tại. Tiếp tục?")) return;
+            if (device?.pairing_code && Date.parse(device.pairing_expires_at + "Z") > Date.now()) {
+                showPairingCode(device);
+                return;
             }
+            try {
+                const response = await consoleFetch(`${API_BASE}/children/${childId}/pairing`, { method: "POST" });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail);
+                showPairingCode(data);
+                fetchChildren();
+            } catch (error) {
+                alert("Không thể tạo mã ghép nối: " + error.message);
+            }
+        }
+
+        async function selectChild(childId) {
+            selectedChildId = childId;
+            await fetchChildren();
+            switchParentTab("stats");
+            fetchUsageStats();
         }
 
         async function deleteChild(childId) {
             if (!confirm("Bạn có chắc chắn muốn xóa hồ sơ của bé này?")) return;
             try {
-                const res = await fetch(`${API_BASE}/children/${childId}`, { method: "DELETE" });
+                const res = await consoleFetch(`${API_BASE}/children/${childId}`, { method: "DELETE" });
                 if (res.ok) {
                     showToast("🗑️ Đã xóa hồ sơ trẻ thành công!", "info");
-                    fetchChildren();
+                    await fetchChildren();
+                    fetchUsageStats();
                 }
             } catch (err) {
                 alert("Lỗi xóa hồ sơ: " + err.message);
@@ -905,7 +849,7 @@ let API_BASE = "http://127.0.0.1:8008";
             const navAlertsBadge = document.getElementById("nav-alerts-badge");
 
             try {
-                const res = await fetch(`${API_BASE}/alerts/`);
+                const res = await consoleFetch(`${API_BASE}/alerts/`);
                 if (!res.ok) return;
                 const alerts = await res.json();
 
@@ -922,7 +866,7 @@ let API_BASE = "http://127.0.0.1:8008";
                 if (!container) return;
 
                 if (alerts.length === 0) {
-                    container.innerHTML = `<p class="text-slate-400 text-xs italic py-4 text-center">Chưa có cảnh báo vi phạm nào. An toàn tuyệt đối! 🟢</p>`;
+                    container.innerHTML = `<p class="text-slate-400 text-xs italic py-4 text-center">Chưa có cảnh báo vi phạm nào. </p>`;
                     return;
                 }
 
@@ -946,18 +890,18 @@ let API_BASE = "http://127.0.0.1:8008";
                                 <span class="text-xl">🛑</span>
                                 <div>
                                     <div class="flex items-center gap-2">
-                                        <span class="font-bold text-rose-900 text-xs">${a.target_value}</span>
+                                        <span class="font-bold text-rose-900 text-xs">${escapeHtml(a.target_value)}</span>
                                         ${catBadge}
                                         <span class="text-[10px] bg-rose-200 text-rose-800 px-1.5 py-0.5 rounded font-mono">${timeStr}</span>
                                     </div>
-                                    <p class="text-[11px] text-rose-700 mt-0.5">${a.reason || "Cố tình truy cập trang web lạ chưa xin phép"}</p>
+                                    <p class="text-[11px] text-rose-700 mt-0.5">${escapeHtml(a.reason || "Cố tình truy cập trang web lạ chưa xin phép")}</p>
                                 </div>
                             </div>
                             <div class="flex items-center gap-1.5 self-end sm:self-auto">
-                                <button onclick="quickAllowAlert('${a.target_value}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition">
+                                <button data-argument="${escapeHtml(a.target_value)}" onclick="quickAllowAlert(this.dataset.argument)" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition">
                                     ✅ Cho phép
                                 </button>
-                                <button onclick="quickBlockAlert('${a.target_value}')" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-xs transition">
+                                <button data-argument="${escapeHtml(a.target_value)}" onclick="quickBlockAlert(this.dataset.argument)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-xs transition">
                                     ⛔ Chặn
                                 </button>
                                 <button onclick="deleteAlert(${a.id})" class="p-1 text-slate-400 hover:text-rose-600 transition" title="Xóa cảnh báo">
@@ -972,7 +916,7 @@ let API_BASE = "http://127.0.0.1:8008";
 
         async function clearAllAlerts() {
             try {
-                await fetch(`${API_BASE}/alerts/`, { method: "DELETE" });
+                await consoleFetch(`${API_BASE}/alerts/`, { method: "DELETE" });
                 showToast("🧹 Đã làm sạch toàn bộ cảnh báo!", "info");
                 fetchAlerts();
             } catch (e) {}
@@ -980,7 +924,7 @@ let API_BASE = "http://127.0.0.1:8008";
 
         async function deleteAlert(id) {
             try {
-                await fetch(`${API_BASE}/alerts/${id}`, { method: "DELETE" });
+                await consoleFetch(`${API_BASE}/alerts/${id}`, { method: "DELETE" });
                 fetchAlerts();
             } catch (e) {}
         }
@@ -992,7 +936,7 @@ let API_BASE = "http://127.0.0.1:8008";
 
         async function quickBlockAlert(target) {
             try {
-                await fetch(`${API_BASE}/rules/`, {
+                await consoleFetch(`${API_BASE}/rules/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -1007,219 +951,39 @@ let API_BASE = "http://127.0.0.1:8008";
             } catch (e) {}
         }
 
-        // ==========================================
-        // QUẢN LÝ THIẾT BỊ CON CÁI & GHÉP NỐI (DEVICES)
-        // ==========================================
-        let cachedDevices = [];
-
-        async function fetchDevices() {
-            const container = document.getElementById("devices-container");
-            const navBadge = document.getElementById("nav-devices-badge");
-            try {
-                const res = await fetch(`${API_BASE}/devices/`);
-                if (!res.ok) return;
-                const devices = await res.json();
-                cachedDevices = devices;
-
-                if (navBadge) {
-                    navBadge.textContent = devices.length;
-                }
-
-                if (!container) return;
-
-                if (devices.length === 0) {
-                    container.innerHTML = `
-                        <div class="p-8 text-center text-slate-400 text-xs col-span-2 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 flex flex-col items-center justify-center">
-                            <span class="text-3xl block mb-2">💻</span>
-                            <span class="font-medium text-slate-600 mb-1">Chưa có thiết bị nào được ghép nối</span>
-                            <p class="max-w-md text-slate-400 mb-4">Hãy tạo hồ sơ thiết bị để nhận mã ghép nối và cài đặt phần mềm bảo vệ lên máy tính của con.</p>
-                            <button onclick="openAddDeviceModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow-xs transition">
-                                ➕ Thêm Thiết Bị Của Con
-                            </button>
-                        </div>
-                    `;
-                    return;
-                }
-
-                container.innerHTML = devices.map(d => {
-                    const isOnline = d.status === "ONLINE_WAN" || d.status === "ONLINE_LAN";
-                    const isPending = !d.is_paired;
-                    
-                    let statusBadge = "";
-                    if (isOnline) {
-                        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>Trực tuyến (Cloud WAN)</span>`;
-                    } else if (isPending) {
-                        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">🟡 Chờ ghép nối (Mã: ${d.pairing_code})</span>`;
-                    } else {
-                        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">⚪ Ngoại tuyến</span>`;
-                    }
-
-                    const platformIcon = (d.platform || "").toLowerCase().includes("win") ? "🪟 Windows" : "🐧 Linux";
-
-                    return `
-                        <div class="p-4 bg-white border border-slate-200 rounded-2xl shadow-xs hover:shadow-md transition space-y-3">
-                            <div class="flex items-start justify-between gap-2">
-                                <div class="flex items-center gap-3">
-                                    <div class="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center text-xl shadow-xs">
-                                        💻
-                                    </div>
-                                    <div>
-                                        <h4 class="font-bold text-slate-800 text-xs">${d.device_name}</h4>
-                                        <span class="text-[10px] text-slate-500">${platformIcon} • ${d.child_name ? '🧒 ' + d.child_name : 'Chưa gán bé'}</span>
-                                    </div>
-                                </div>
-                                <div>${statusBadge}</div>
-                            </div>
-
-                            <!-- Thông tin phần cứng & Bảo mật -->
-                            <div class="p-2.5 bg-slate-50 border border-slate-100 rounded-xl space-y-1 text-[11px]">
-                                <div class="flex justify-between items-center text-slate-600">
-                                    <span>Mã phần cứng (HWID):</span>
-                                    <code class="font-mono text-[10px] font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-200 select-all">${d.device_hwid || 'Chờ máy con gửi HWID'}</code>
-                                </div>
-                                <div class="flex justify-between items-center text-slate-600">
-                                    <span>Bảo vệ chống tắt:</span>
-                                    <span class="font-semibold text-indigo-700">🔒 System Service / Daemon (Mật khẩu Admin)</span>
-                                </div>
-                                <div class="flex justify-between items-center text-slate-600">
-                                    <span>Bộ lọc AI:</span>
-                                    <span class="font-semibold text-emerald-700">🤖 Văn bản & Màn hình thời gian thực</span>
-                                </div>
-                            </div>
-
-                            <!-- Các nút điều khiển từ xa qua Cloud Relay -->
-                            <div class="flex items-center justify-between pt-1 border-t border-slate-100">
-                                <div class="flex items-center gap-1.5">
-                                    <button onclick="sendRemoteDeviceCommand('${d.device_hwid || d.id}', 'LOCK_MACHINE')" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition" title="Khóa màn hình máy con ngay lập tức qua WAN">
-                                        🔒 Khóa
-                                    </button>
-                                    <button onclick="sendRemoteDeviceCommand('${d.device_hwid || d.id}', 'UNLOCK_MACHINE')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition" title="Mở khóa máy con từ xa">
-                                        🔓 Mở
-                                    </button>
-                                    <button onclick="promptSendMessage('${d.device_hwid || d.id}')" class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition" title="Gửi lời nhắn tới máy con">
-                                        💬 Nhắn
-                                    </button>
-                                </div>
-                                <button onclick="deleteDeviceItem('${d.id}')" class="text-slate-400 hover:text-rose-600 text-xs transition p-1" title="Xóa thiết bị này">
-                                    🗑️ Xóa
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                }).join("");
-            } catch (e) {}
-        }
-
-        function openAddDeviceModal() {
-            const selectEl = document.getElementById("devChildProfile");
-            if (selectEl) {
-                if (Array.isArray(currentChildren) && currentChildren.length > 0) {
-                    selectEl.innerHTML = `<option value="">-- Chưa gán bé cụ thể --</option>` + currentChildren.map(c => `
-                        <option value="${c.id}">${c.avatar || '🧒'} ${c.name} (${c.age} tuổi)</option>
-                    `).join("");
-                } else {
-                    selectEl.innerHTML = `<option value="">-- Chưa có hồ sơ bé (sẽ gán sau) --</option>`;
-                }
+        async function sendRemoteDeviceCommand(hwid, action, data = {}) {
+            if (!hwid) {
+                showToast("Hãy chọn hồ sơ đã ghép nối trong mục Hồ sơ trẻ.", "danger");
+                return false;
             }
-            document.getElementById("create-device-form").classList.remove("hidden");
-            document.getElementById("device-paired-instructions").classList.add("hidden");
-            document.getElementById("add-device-modal").classList.remove("hidden");
-        }
-
-        function closeAddDeviceModal() {
-            document.getElementById("add-device-modal").classList.add("hidden");
-        }
-
-        async function submitCreateDevice(e) {
-            e.preventDefault();
-            const name = document.getElementById("devName").value.trim();
-            const childId = document.getElementById("devChildProfile").value;
-            const limit = parseInt(document.getElementById("devLimit").value) || 90;
-            const bedtime = document.getElementById("devBedtime").value.trim() || "22:00";
-
-            const blockedItems = [];
-            if (document.getElementById("block-roblox")?.checked) blockedItems.push("roblox");
-            if (document.getElementById("block-tiktok")?.checked) blockedItems.push("tiktok.com");
-            if (document.getElementById("block-discord")?.checked) blockedItems.push("discord.com");
-            if (document.getElementById("block-facebook")?.checked) blockedItems.push("facebook.com");
-
             try {
-                const res = await fetch(`${API_BASE}/devices/create`, {
+                const res = await consoleFetch(`${API_BASE}/relay/command`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        device_name: name,
-                        child_profile_id: childId ? parseInt(childId) : null,
-                        daily_limit_minutes: limit,
-                        bedtime: bedtime,
-                        blocked_items: blockedItems
-                    })
+                    body: JSON.stringify({ target_hwid: hwid, action, data })
                 });
-                if (res.ok) {
-                    const data = await res.json();
-                    document.getElementById("create-device-form").classList.add("hidden");
-                    document.getElementById("generated-pairing-code").textContent = data.pairing_code;
-                    const serverFlag = API_BASE ? ` --server ${API_BASE}` : "";
-                    document.getElementById("pairing-cmd-linux").textContent = `python agent/agent_main.py --pair-code ${data.pairing_code}${serverFlag}`;
-                    document.getElementById("device-paired-instructions").classList.remove("hidden");
-                    showToast(`🎉 Đã tạo mã ghép nối: ${data.pairing_code}`, "success");
-                    fetchDevices();
-                } else {
-                    alert("Không thể tạo thiết bị, vui lòng thử lại!");
+                if (!res.ok) {
+                    const result = await res.json();
+                    throw new Error(typeof result.detail === "string" ? result.detail : "Máy chưa nhận được lệnh.");
                 }
-            } catch (err) {
-                alert("Lỗi kết nối máy chủ: " + err.message);
-            }
-        }
-
-        async function sendRemoteDeviceCommand(hwid, action) {
-            try {
-                const res = await fetch(`${API_BASE}/relay/command`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        target_hwid: hwid,
-                        action: action
-                    })
-                });
-                if (res.ok) {
-                    showToast(`🚀 Đã gửi lệnh ${action} tới máy con qua Cloud Relay WAN!`, "success");
-                }
-            } catch (e) {
-                alert("Lỗi gửi lệnh: " + e.message);
+                showToast("Đã gửi lệnh tới máy đã chọn.", "success");
+                return true;
+            } catch (error) {
+                showToast(error.message, "danger");
+                return false;
             }
         }
 
         function promptSendMessage(hwid) {
-            const msg = prompt("Nhập lời nhắn gửi tới máy con:");
-            if (!msg) return;
-            fetch(`${API_BASE}/relay/command`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    target_hwid: hwid,
-                    action: "PARENT_MESSAGE",
-                    data: { message: msg }
-                })
-            }).then(() => showToast(`💬 Đã gửi lời nhắn: "${msg}"`, "info"));
-        }
-
-        async function deleteDeviceItem(devId) {
-            if (!confirm("Bạn có chắc chắn muốn hủy liên kết và xóa thiết bị này?")) return;
-            try {
-                const res = await fetch(`${API_BASE}/devices/${devId}`, { method: "DELETE" });
-                if (res.ok) {
-                    showToast("Đã xóa thiết bị thành công", "info");
-                    fetchDevices();
-                }
-            } catch (e) {}
+            const message = prompt("Nhập lời nhắn gửi tới máy con:")?.trim();
+            if (message) sendRemoteDeviceCommand(hwid, "MESSAGE", { message });
         }
 
         async function fetchRules() {
             const listEl = document.getElementById("rules-list");
             if (!listEl) return;
             try {
-                const res = await fetch(`${API_BASE}/rules/`);
+                const res = await consoleFetch(`${API_BASE}/rules/`);
                 const rules = await res.json();
                 listEl.innerHTML = "";
 
@@ -1242,13 +1006,13 @@ let API_BASE = "http://127.0.0.1:8008";
                         <div class="flex items-center gap-2 overflow-hidden">
                             <span>${icon}</span>
                             <div>
-                                <span class="font-bold text-slate-700 block truncate">${r.target_value}</span>
+                                <span class="font-bold text-slate-700 block truncate">${escapeHtml(r.target_value)}</span>
                                 <span class="text-[10px] text-slate-500">Giới hạn: ${r.time_limit_minutes > 0 ? r.time_limit_minutes + 'p' : 'Vô hạn'} (${remText})</span>
                             </div>
                         </div>
                         <div class="flex items-center gap-2">
                             <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badgeBg}">${badgeText}</span>
-                            <button onclick="deleteRule('${r.id}')" class="text-slate-400 hover:text-rose-600 text-xs font-semibold px-1">
+                            <button data-argument="${escapeHtml(r.id)}" onclick="deleteRule(this.dataset.argument)" class="text-slate-400 hover:text-rose-600 text-xs font-semibold px-1">
                                 Xóa
                             </button>
                         </div>
@@ -1256,7 +1020,7 @@ let API_BASE = "http://127.0.0.1:8008";
                     listEl.appendChild(card);
                 });
             } catch (e) {
-                listEl.innerHTML = `<p class="text-rose-500 text-xs col-span-full">Lỗi tải quy tắc: ${e.message}</p>`;
+                listEl.innerHTML = `<p class="text-rose-500 text-xs col-span-full">Lỗi tải quy tắc: ${escapeHtml(e.message)}</p>`;
             }
         }
 
@@ -1270,7 +1034,7 @@ let API_BASE = "http://127.0.0.1:8008";
             if (!target) return;
 
             try {
-                const res = await fetch(`${API_BASE}/rules/`, {
+                const res = await consoleFetch(`${API_BASE}/rules/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -1295,7 +1059,7 @@ let API_BASE = "http://127.0.0.1:8008";
         async function deleteRule(ruleId) {
             if (!confirm("Bạn có chắc muốn xóa quy tắc này?")) return;
             try {
-                const res = await fetch(`${API_BASE}/rules/${ruleId}`, { method: "DELETE" });
+                const res = await consoleFetch(`${API_BASE}/rules/${ruleId}`, { method: "DELETE" });
                 if (res.ok) {
                     showToast("Đã xóa quy tắc thành công!", "info");
                     fetchRules();
@@ -1327,7 +1091,7 @@ let API_BASE = "http://127.0.0.1:8008";
             if (!confirm(confirmMsg)) return;
 
             try {
-                const res = await fetch(`${API_BASE}${endpoint}`, { method: "POST" });
+                const res = await consoleFetch(`${API_BASE}${endpoint}`, { method: "POST" });
                 const result = await res.json();
                 if (res.ok) {
                     showToast(result.message || "Thao tác reset thành công!", "success");
@@ -1342,15 +1106,13 @@ let API_BASE = "http://127.0.0.1:8008";
 
         window.addEventListener("DOMContentLoaded", async () => {
             updateSoundUI();
-            await autoDetectBackendPort();
             initWebSocket();
             fetchRequests();
-            fetchUsageStats();
             fetchRules();
             fetchCurfew();
-            fetchChildren();
+            await fetchChildren();
+            fetchUsageStats();
             fetchAlerts();
-            fetchDevices();
 
             switchParentTab('overview');
         });

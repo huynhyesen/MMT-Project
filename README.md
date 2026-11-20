@@ -157,6 +157,8 @@ pip install -r requirements.txt
 ---
 
 ### 2. Khởi động Backend Server
+Đặt biến môi trường `MMT_PARENT_PASSWORD` trước khi chạy Uvicorn trực tiếp. Launcher phụ huynh sẽ hỏi mật khẩu nếu biến chưa được đặt.
+
 ```bash
 # Kích hoạt môi trường ảo
 source .venv/bin/activate
@@ -173,7 +175,7 @@ uvicorn backend.app.main:app --reload --port 8000
 ### 3. Khởi chạy Giao diện Phụ Huynh (Parent Dashboard)
 - **Truy cập qua Web (Điện thoại / Tablet / Máy tính):**
   - Địa chỉ: `http://localhost:8008/parent/` (hoặc `http://<IP_LAN>:8008/parent/` trên điện thoại kết nối cùng Wi-Fi).
-  - Hoặc mở trực tiếp file `parent-app/index.html` trên trình duyệt (hệ thống sẽ tự động dò tìm cổng backend).
+  - Đăng nhập bằng tài khoản `parent` và mật khẩu của máy chủ.
 - **Chạy ứng dụng Desktop Native (Tkinter):**
   ```bash
   source .venv/bin/activate
@@ -186,7 +188,7 @@ uvicorn backend.app.main:app --reload --port 8000
 ### 4. Khởi chạy Giao diện Con Cái (Child Dashboard)
 - **Truy cập qua Web (Máy tính / Tablet):**
   - Địa chỉ: `http://localhost:8008/child/` (hoặc `http://<IP_LAN>:8008/child/`).
-  - Hoặc mở trực tiếp file `child-app/index.html` trên trình duyệt.
+  - Sau khi ghép nối, mở **Góc Của Con** từ Agent để vào hồ sơ của máy.
 - **Chạy ứng dụng Desktop Native (Tkinter):**
   ```bash
   source .venv/bin/activate
@@ -242,3 +244,15 @@ flowchart TD
 - Cài đặt & Ghép nối (Máy Con): Cha mẹ tải và chạy Client Agent trên máy tính của con dưới quyền Quản trị viên (Admin/Root). Agent tự động lấy mã phần cứng (device_hwid) để liên kết với máy chủ Backend và tải cấu hình của cha mẹ về áp dụng.
 - Giám sát tự động: Trong quá trình con dùng máy, Agent chạy ngầm theo dõi thời gian thực tế, chặn các tiến trình vi phạm bằng psutil và chặn tên miền cấm qua '/etc/hosts'[cite: 1, 3].
 - Tương tác 2 chiều: Khi hết giờ hoặc cần vào web học tập bị chặn, con mở Child Dashboard gửi yêu cầu $\rightarrow$ Cha mẹ nhận thông báo trên Parent Dashboard và bấm duyệt $\rightarrow$ Máy con tự động được cộng thêm giờ hoặc mở khóa trang web ngay lập tức qua WebSocket.
+
+## Ghép nối máy theo hồ sơ trẻ
+
+1. Chạy `KhoiDong_ChaMe.sh` hoặc `KhoiDong_ChaMe.bat`. Đặt mật khẩu phụ huynh khi được hỏi, rồi mở `/parent/` và đăng nhập bằng tài khoản `parent`. Nếu chạy Uvicorn trực tiếp, đặt biến môi trường `MMT_PARENT_PASSWORD` trước khi chạy. Khi triển khai qua mạng, dùng HTTPS để bảo vệ mật khẩu, mã PIN và thông tin ghép nối.
+2. Vào **Hồ sơ trẻ**, tạo hồ sơ với mã PIN 4 số và tên máy. Mã ghép nối xuất hiện ngay sau khi lưu và có hiệu lực 10 phút. Mỗi hồ sơ có một vị trí thiết bị và mỗi máy chỉ được ghép với một hồ sơ.
+3. Trên máy của trẻ, chạy `Chay_MayCon.sh` hoặc `Chay_MayCon.bat` và nhập mã. Nếu máy đã từng được đăng ký, chạy launcher với tham số `--pair` để nhập mã mới. Dùng địa chỉ máy chủ trong mạng LAN hoặc địa chỉ HTTPS đã cấu hình.
+4. Mở **Góc Của Con** từ Agent và nhập PIN của hồ sơ đã ghép với máy. Ứng dụng Tkinter của trẻ cũng hỗ trợ nhập PIN khi chạy bằng tài khoản có quyền đọc cấu hình Agent.
+5. Để thay máy hoặc tạo lại mã, mở thẻ hồ sơ tương ứng. **Đổi máy** thu hồi quyền của máy cũ. Các nút điều khiển trên dashboard phụ huynh gửi lệnh tới máy của hồ sơ đang xem hoặc tới máy trên thẻ được bấm.
+
+Khi nâng cấp, sao lưu `backend/app.db` trước khi khởi động. Nếu một hồ sơ cũ có nhiều thiết bị, hệ thống giữ thiết bị đã ghép gần nhất và gỡ liên kết dư. Dùng **Đổi máy** để cấp thông tin xác thực mới cho Agent cũ. Nhật ký có từ trước khi bổ sung liên kết thiết bị vẫn nằm trong báo cáo tổng hợp, vì các bản ghi cũ không chứa mã thiết bị.
+
+Hai dashboard được phục vụ trực tiếp từ backend, cùng với Tailwind CSS và Chart.js. Khi đổi lớp Tailwind, chạy lại công cụ Tailwind CSS 3.4.19 với nội dung từ HTML và JavaScript của hai dashboard, `backend/app/main.py` và `backend/app/services/classification.py`, rồi cập nhật `backend/app/assets/dashboard.css`.

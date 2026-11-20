@@ -18,3 +18,7 @@ agent/config.json
 .vscode/
 .idea/
 *.swp
+
+# Local Agent enrollment credentials
+agent/config.local.json
+agent/.config-*

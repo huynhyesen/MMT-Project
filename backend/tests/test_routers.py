@@ -1,11 +1,14 @@
 
-import json
+from base64 import b64encode
+from types import SimpleNamespace
 
 from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
 
+from app import main
 from app.main import app
 from app import database, models
 from app.routers import relay
@@ -72,13 +75,14 @@ def mock_db():
 
 
 @pytest.fixture
-def client(mock_db):
+def client(mock_db, parent_credentials):
     def override_get_db():
         yield mock_db
 
     app.dependency_overrides[database.get_db] = override_get_db
 
-    with TestClient(app) as test_client:
+    credential = b64encode(":".join(parent_credentials).encode()).decode()
+    with TestClient(app, headers={"Authorization": f"Basic {credential}"}) as test_client:
         yield test_client
 
     app.dependency_overrides.clear()
@@ -90,6 +94,7 @@ def mock_relay_manager(monkeypatch):
         # Giả lập quá trình chấp nhận WebSocket connection
         await websocket.accept()
 
+    monkeypatch.setattr(relay, "resolve_device", lambda *args, **kwargs: SimpleNamespace(device_hwid="device-001"))
     connect = AsyncMock(side_effect=mock_connect)
     broadcast_json = AsyncMock()
     broadcast_text = AsyncMock()
@@ -310,154 +315,45 @@ def test_send_relay_command_default_action(
 # RELAY ROUTER - WEBSOCKET CONNECTION
 # ============================================================
 
-def test_relay_websocket_connect(
-    client,
-    mock_relay_manager
-):
-    with client.websocket_connect(
-        "/ws/relay/device-001"
-    ):
+def test_relay_websocket_connect_and_disconnect(client, mock_relay_manager):
+    with client.websocket_connect("/ws/relay/device-001") as socket:
+        socket.send_json({"type": "PING"})
+        assert socket.receive_json()["type"] == "PONG"
         mock_relay_manager["connect"].assert_awaited_once()
-
-        args = mock_relay_manager["connect"].await_args.args
-
-        assert args[0] == "device-001"
-
-        mock_relay_manager[
-            "broadcast_json"
-        ].assert_awaited_once()
-
-        connected_message = (
-            mock_relay_manager["broadcast_json"]
-            .await_args.args[0]
-        )
-
-        assert connected_message["type"] == "DEVICE_CONNECTED_WAN"
-        assert connected_message["device_hwid"] == "device-001"
-
+        assert mock_relay_manager["connect"].await_args.args[0] == "device-001"
     mock_relay_manager["disconnect"].assert_called_once()
-
-
-# ============================================================
-# RELAY ROUTER - PING / PONG
-# ============================================================
-
-def test_relay_websocket_ping(
-    client,
-    mock_relay_manager
-):
-    with client.websocket_connect(
-        "/ws/relay/device-001"
-    ) as websocket:
-
-        websocket.send_json({
-            "type": "PING"
-        })
-
-        response = websocket.receive_json()
-
-        assert response["type"] == "PONG"
-        assert "timestamp" in response
-
-        # PONG phải được gửi trực tiếp về client,
-        # không broadcast sang các thiết bị khác.
-        assert (
-            mock_relay_manager["broadcast_json"].await_count
-            == 1
-        )
-
-
-# ============================================================
-# RELAY ROUTER - MESSAGE BROADCAST
-# ============================================================
-
-def test_relay_websocket_broadcast_message(
-    client,
-    mock_relay_manager
-):
-    with client.websocket_connect(
-        "/ws/relay/device-001"
-    ) as websocket:
-
-        websocket.send_json({
-            "type": "TELEMETRY",
-            "data": {
-                "app_name": "test-app"
-            }
-        })
-
-    assert (
-        mock_relay_manager["broadcast_json"].await_count
-        == 3
-    )
-
-    forwarded_message = (
-        mock_relay_manager["broadcast_json"]
-        .await_args_list[1].args[0]
-    )
-
-    assert forwarded_message["type"] == "TELEMETRY"
-
-
-# ============================================================
-# RELAY ROUTER - RAW TEXT
-# ============================================================
-
-def test_relay_websocket_raw_text(
-    client,
-    mock_relay_manager
-):
-    with client.websocket_connect(
-        "/ws/relay/device-001"
-    ) as websocket:
-        websocket.send_text("raw-message")
-
-    mock_relay_manager[
-        "broadcast_text"
-    ].assert_awaited_once_with(
-        "raw-message",
-        sender_ws=mock_relay_manager[
-            "broadcast_text"
-        ].await_args.kwargs["sender_ws"]
-    )
-
-
-# ============================================================
-# RELAY ROUTER - DISCONNECTION
-# ============================================================
-
-def test_relay_websocket_disconnect(
-    client,
-    mock_relay_manager
-):
-    with client.websocket_connect(
-        "/ws/relay/device-001"
-    ):
-        pass
-
-    mock_relay_manager["disconnect"].assert_called_once()
-
-    messages = [
-        call.args[0]
-        for call in mock_relay_manager[
-            "broadcast_json"
-        ].await_args_list
+    events = mock_relay_manager["send_to_device"].await_args_list
+    assert [call.args[0] for call in events] == ["parent_dashboard", "parent_dashboard"]
+    assert [call.args[1]["type"] for call in events] == [
+        "DEVICE_CONNECTED_WAN", "DEVICE_DISCONNECTED_WAN"
     ]
 
-    assert messages[0]["type"] == "DEVICE_CONNECTED_WAN"
-    assert messages[-1]["type"] == "DEVICE_DISCONNECTED_WAN"
+
+def test_relay_websocket_events_are_scoped(client, mock_relay_manager):
+    with client.websocket_connect("/ws/relay/device-001") as socket:
+        socket.send_json({"type": "TELEMETRY", "data": {"app_name": "test-app"}})
+        socket.send_text("raw-message")
+        socket.send_json({"type": "PING"})
+        assert socket.receive_json()["type"] == "PONG"
+    events = mock_relay_manager["send_to_device"].await_args_list
+    assert [call.args[1]["type"] for call in events] == [
+        "DEVICE_CONNECTED_WAN", "TELEMETRY", "DEVICE_DISCONNECTED_WAN"
+    ]
+    assert events[1].args[0] == "parent_dashboard"
+    mock_relay_manager["broadcast_json"].assert_not_awaited()
+    mock_relay_manager["broadcast_text"].assert_not_awaited()
 
 
 # ============================================================
 # STANDARDIZED DAILY ROLLOVER & USAGE RESET
 # ============================================================
 
-def test_daily_rollover_and_usage_reset(client):
-    from app import database, models
-    from app.main import perform_daily_reset
-
-    db = database.SessionLocal()
+def test_daily_rollover_and_usage_reset(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'rollover.db'}")
+    models.Base.metadata.create_all(bind=engine)
+    db = database.SessionLocal(bind=engine)
     try:
+        db.add(models.DailyRollover(id=1, day="2098-12-31"))
         # Tạo dữ liệu giả định trong ngày
         rule = models.AppWebRule(
             rule_type="APP",
@@ -482,7 +378,8 @@ def test_daily_rollover_and_usage_reset(client):
         db.commit()
 
         # Thực thi hàm chuẩn hóa daily reset
-        perform_daily_reset(db, today_str="2099-01-01")
+        assert main.perform_daily_reset(db, today_str="2099-01-01", automatic=True)
+        assert not main.perform_daily_reset(db, today_str="2099-01-01", automatic=True)
 
         # Kiểm tra kết quả
         refreshed_rule = db.query(models.AppWebRule).filter(
@@ -498,16 +395,26 @@ def test_daily_rollover_and_usage_reset(client):
         ).first()
         assert refreshed_req.status == "EXPIRED"
 
-        # Dọn dẹp
-        db.delete(refreshed_rule)
-        db.delete(refreshed_req)
-        db.commit()
     finally:
         db.close()
+        engine.dispose()
 
 
-def test_reset_usage_endpoint(client):
+def test_reset_usage_endpoint(client, mock_db, monkeypatch):
+    rule = models.AppWebRule(used_minutes=45)
+    mock_db.query_results[models.AppWebRule] = [rule]
+    broadcast = AsyncMock()
+    monkeypatch.setattr(main.manager, "broadcast_json", broadcast)
+    query = MagicMock(wraps=mock_db.query)
+    monkeypatch.setattr(mock_db, "query", query)
+
     res = client.post("/reset/usage")
+
     assert res.status_code == 200
     assert res.json()["status"] == "success"
+    assert rule.used_minutes == 0
+    assert models.ChildRequest not in [call.args[0] for call in query.call_args_list]
+    mock_db.commit.assert_called_once()
+    broadcast.assert_awaited_once()
+    assert broadcast.await_args.args[0]["type"] == "USAGE_RESET"
 

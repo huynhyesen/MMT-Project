@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, field_validator
 
 from ..services.realtime import manager
+from ..security import resolve_device, same_origin
 
 
 router = APIRouter(tags=["Relay"])
@@ -49,65 +50,39 @@ async def cloud_relay_endpoint(
     websocket: WebSocket,
     device_hwid: str,
 ):
-    connected = False
+    device = resolve_device(websocket, agent_only=True) if same_origin(websocket) else None
+    if not device or device.device_hwid != device_hwid or device_hwid == "parent_dashboard":
+        await websocket.close(code=1008)
+        return
 
+    await manager.connect(device_hwid, websocket)
     try:
-        await manager.connect(device_hwid, websocket)
-        connected = True
-
-        await manager.broadcast_json({
+        await manager.send_to_device("parent_dashboard", {
             "type": "DEVICE_CONNECTED_WAN",
             "device_hwid": device_hwid,
         })
-
         while True:
             raw_data = await websocket.receive_text()
-
             try:
                 message = json.loads(raw_data)
             except json.JSONDecodeError:
-                # Tương thích với các Agent cũ gửi payload dạng text thuần.
-                await manager.broadcast_text(
-                    raw_data,
-                    sender_ws=websocket,
-                )
                 continue
-
-            # Chỉ xử lý PING nếu payload là JSON object.
             if not isinstance(message, dict):
-                await manager.broadcast_text(
-                    raw_data,
-                    sender_ws=websocket,
-                )
                 continue
-
-            message_type = str(message.get("type", "")).strip().upper()
-
+            message_type = message.get("type")
             if message_type == "PING":
-                await websocket.send_json({
-                    "type": "PONG",
-                    "timestamp": time.time(),
-                })
-                continue
-
-            # Không cho Agent tự giả danh một thiết bị khác.
-            message["device_hwid"] = device_hwid
-
-            await manager.broadcast_json(
-                message,
-                sender_ws=websocket,
-            )
-
+                await websocket.send_json({"type": "PONG", "timestamp": time.time()})
+            elif message_type in ("AGENT_ONLINE", "TELEMETRY", "AI_CONTENT_VIOLATION", "UNAPPROVED_ATTEMPT"):
+                message["device_hwid"] = device_hwid
+                await manager.send_to_device("parent_dashboard", message)
     except WebSocketDisconnect:
-        # Client đóng kết nối bình thường.
         pass
     finally:
-        if connected:
-            manager.disconnect(websocket)
-            await manager.broadcast_json({
-                "type": "DEVICE_DISCONNECTED_WAN",
-                "device_hwid": device_hwid,
-            })
+        manager.disconnect(websocket)
+        await manager.send_to_device("parent_dashboard", {
+            "type": "DEVICE_DISCONNECTED_WAN",
+            "device_hwid": device_hwid,
+        })
 
 
 @router.post("/relay/command")
@@ -115,7 +90,7 @@ async def send_relay_command(payload: RelayCommandRequest):
     target_hwid = payload.target_hwid
     action = payload.action
 
-    if action not in ALLOWED_ACTIONS:
+    if target_hwid == "parent_dashboard" or action not in ALLOWED_ACTIONS:
         raise HTTPException(
             status_code=400,
             detail=f"Action không được hỗ trợ: {action}",

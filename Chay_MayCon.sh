@@ -46,7 +46,7 @@ if [ ! -x "$VENV_PYTHON" ]; then
 fi
 
 # 3. Kiểm tra và cài đặt thư viện cần thiết (lọc bỏ pywin32 nếu có trong requirements.txt)
-if ! "$VENV_PYTHON" -c "import websockets, psutil, requests" >/dev/null 2>&1; then
+if ! "$VENV_PYTHON" -c "from websockets.asyncio.client import connect; import psutil, requests" >/dev/null 2>&1; then
     echo "[*] Đang cài đặt thư viện cần thiết cho Agent..."
     sudo -u "$REAL_USER" "$VENV_PIP" install --upgrade pip >/dev/null 2>&1
     if [ -f "requirements.txt" ]; then
@@ -55,7 +55,7 @@ if ! "$VENV_PYTHON" -c "import websockets, psutil, requests" >/dev/null 2>&1; th
         sudo -u "$REAL_USER" "$VENV_PIP" install -r .req_linux.tmp
         rm -f .req_linux.tmp
     else
-        sudo -u "$REAL_USER" "$VENV_PIP" install websockets psutil requests
+        sudo -u "$REAL_USER" "$VENV_PIP" install "websockets>=13.0" psutil requests
     fi
 
     if [ $? -ne 0 ]; then
@@ -85,11 +85,6 @@ cleanup() {
         systemd-resolve --flush-caches 2>/dev/null || true
     fi
 
-    # Đảm bảo config.json không bị khóa quyền bởi root
-    if [ -f "agent/config.json" ] && [ -n "$REAL_USER" ]; then
-        chown "$REAL_USER:$REAL_USER" "agent/config.json" 2>/dev/null || true
-    fi
-
     echo "[OK] Đã hoàn tất dọn dẹp và trả lại trạng thái mạng ban đầu!"
 }
 
@@ -116,7 +111,7 @@ else
 fi
 
 # 6. Ghép nối thiết bị hoặc khởi chạy Agent (đã có quyền root để sửa /etc/hosts)
-if [ ! -f "agent/config.json" ]; then
+if [ ! -f "agent/config.local.json" ] || [ "${1:-}" = "--pair" ]; then
     echo ""
     echo "[*] Thiết bị chưa ghép nối với máy Cha Mẹ."
     while true; do

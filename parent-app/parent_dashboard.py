@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
+import base64
 import json
+import os
 import urllib.request
 
 API_BASE = "http://127.0.0.1:8008"
@@ -8,6 +10,12 @@ API_BASE = "http://127.0.0.1:8008"
 def send_api(endpoint, data=None, method="GET"):
     """Gửi HTTP request bằng urllib, tự động thử cổng 8008 và 8000."""
     global API_BASE
+    password = os.getenv("MMT_PARENT_PASSWORD") or simpledialog.askstring(
+        "MMT", "Mật khẩu phụ huynh", show="*", parent=root
+    )
+    if not password:
+        return None, "Cần mật khẩu phụ huynh."
+    auth = base64.b64encode(f"parent:{password}".encode()).decode()
     for port in [8008, 8000, 8001, 8080]:
         base = f"http://127.0.0.1:{port}"
         try:
@@ -16,11 +24,12 @@ def send_api(endpoint, data=None, method="GET"):
             req = urllib.request.Request(
                 url, 
                 data=payload, 
-                headers={"Content-Type": "application/json"} if payload is not None else {}, 
+                headers={"Content-Type": "application/json", "Authorization": f"Basic {auth}"},
                 method=method
             )
             with urllib.request.urlopen(req, timeout=2) as resp:
                 API_BASE = base
+                os.environ["MMT_PARENT_PASSWORD"] = password
                 return json.loads(resp.read().decode("utf-8")), None
         except Exception:
             continue

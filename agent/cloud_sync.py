@@ -1,14 +1,15 @@
 import os
 import sys
 import json
-import time
+import hmac
+import tempfile
 import urllib.request
-import asyncio
 from typing import Optional, Dict, Any
 
 from hwid import get_device_hwid, get_machine_info
 
-CONFIG_FILE_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+CONFIG_FILE_PATH = os.path.join(os.path.dirname(__file__), "config.local.json")
+LEGACY_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 def load_agent_config() -> Dict[str, Any]:
     """Đọc cấu hình định danh và ghép nối của Agent."""
@@ -22,9 +23,10 @@ def load_agent_config() -> Dict[str, Any]:
         "cloud_relay_ws": "ws://127.0.0.1:8008",
         "last_sync": None
     }
-    if os.path.exists(CONFIG_FILE_PATH):
+    path = CONFIG_FILE_PATH if os.path.exists(CONFIG_FILE_PATH) else LEGACY_CONFIG_PATH
+    if os.path.exists(path):
         try:
-            with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
                 default_config.update(saved)
         except Exception:
@@ -33,17 +35,46 @@ def load_agent_config() -> Dict[str, Any]:
 
 def save_agent_config(cfg: Dict[str, Any]):
     """Lưu cấu hình Agent vào file cục bộ."""
+    directory = os.path.dirname(CONFIG_FILE_PATH)
+    fd, temporary = tempfile.mkstemp(prefix=".config-", dir=directory)
     try:
-        with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"⚠️ Không thể lưu config.json: {e}")
+        os.replace(temporary, CONFIG_FILE_PATH)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def device_headers(config=None):
+    if config is None:
+        config = load_agent_config()
+    credential = config.get("device_credential")
+    return {"Authorization": f"Bearer {credential}"} if credential else {}
+
+
+def dashboard_enrollment(config=None):
+    if config is None:
+        config = load_agent_config()
+    device_id, _, token = config.get("device_credential", "").partition(".")
+    if not token:
+        return None
+    key = hmac.digest(token.encode(), b"mmt-dashboard-enrollment", "sha256").hex()
+    return f"{device_id}.{key}"
+
+
+def child_dashboard_url(backend_http):
+    base = f"{backend_http.rstrip('/')}/child/"
+    enrollment = dashboard_enrollment()
+    return f"{base}#device={enrollment}" if enrollment else base
+
 
 def pair_with_backend(pairing_code: str, backend_http: str = "http://127.0.0.1:8008") -> Optional[Dict[str, Any]]:
     """
     Thực hiện ghép nối thiết bị với Backend bằng mã ghép nối (Pairing Code) của Cha Mẹ.
     Tự động lấy HWID phần cứng và gửi yêu cầu đăng ký.
     """
+    backend_http = backend_http.rstrip("/")
     machine_info = get_machine_info()
     payload = json.dumps({
         "device_hwid": machine_info["hwid"],
@@ -69,7 +100,8 @@ def pair_with_backend(pairing_code: str, backend_http: str = "http://127.0.0.1:8
             # Lưu trạng thái ghép nối
             cfg = load_agent_config()
             cfg["is_paired"] = True
-            cfg["pairing_code"] = pairing_code.strip().upper()
+            cfg.pop("pairing_code", None)
+            cfg["device_credential"] = data["device_credential"]
             cfg["backend_url"] = backend_http
             save_agent_config(cfg)
             return data
@@ -83,7 +115,7 @@ def pair_with_backend(pairing_code: str, backend_http: str = "http://127.0.0.1:8
 def fetch_parent_config(hwid: str, backend_http: str = "http://127.0.0.1:8008") -> Optional[Dict[str, Any]]:
     """Tải cấu hình quy tắc mới nhất từ Phụ huynh."""
     try:
-        req = urllib.request.Request(f"{backend_http}/devices/{hwid}/config")
+        req = urllib.request.Request(f"{backend_http}/devices/{hwid}/config", headers=device_headers())
         with urllib.request.urlopen(req, timeout=4) as resp:
             return json.loads(resp.read().decode())
     except Exception:
@@ -96,4 +128,6 @@ if __name__ == "__main__":
         pair_with_backend(code, server)
     else:
         cfg = load_agent_config()
+        cfg.pop("device_credential", None)
+        cfg.pop("pairing_code", None)
         print("Cấu hình thiết bị hiện tại:", json.dumps(cfg, indent=2))

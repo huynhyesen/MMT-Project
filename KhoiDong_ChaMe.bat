@@ -73,7 +73,7 @@ for /f "usebackq delims=" %%i in (`python -c "import socket; s = socket.socket(s
 :: 7. Khởi động Máy chủ Backend
 echo [*] Đang khởi động Máy chủ Backend ^(Cổng 8008^)...
 set "PYTHONPATH=%~dp0"
-start "MMT Backend Server" /min ".venv\Scripts\python.exe" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8008
+start "MMT Backend Server" ".venv\Scripts\python.exe" -m backend.serve
 
 :: 8. Chờ Server thực sự sẵn sàng nhận kết nối (tối đa 10 giây)
 echo [*] Đang chờ máy chủ phản hồi...

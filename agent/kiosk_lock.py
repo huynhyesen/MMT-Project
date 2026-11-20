@@ -7,6 +7,8 @@ import json
 import webbrowser
 from typing import Optional, Callable
 
+from cloud_sync import device_headers
+
 _kiosk_thread: Optional[threading.Thread] = None
 _kiosk_root = None
 _is_locked = False
@@ -114,7 +116,7 @@ def show_kiosk_lock(
                     req = urllib.request.Request(
                         f"{_backend_url}/requests/",
                         data=payload,
-                        headers={"Content-Type": "application/json"},
+                        headers={"Content-Type": "application/json", **device_headers()},
                         method="POST"
                     )
                     with urllib.request.urlopen(req, timeout=3) as resp:

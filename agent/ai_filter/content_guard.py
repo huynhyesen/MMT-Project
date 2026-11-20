@@ -3,6 +3,8 @@ import json
 import urllib.request
 from typing import Optional, Dict, Any
 
+from cloud_sync import device_headers
+
 from .text_analyzer import AITextAnalyzer
 from .image_analyzer import AIImageAnalyzer
 
@@ -70,7 +72,7 @@ class AIContentGuard:
             req = urllib.request.Request(
                 f"{self.backend_url}/alerts/",
                 data=payload,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", **device_headers()},
                 method="POST"
             )
             urllib.request.urlopen(req, timeout=1.5)

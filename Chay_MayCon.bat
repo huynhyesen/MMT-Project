@@ -54,14 +54,14 @@ call ".venv\Scripts\activate.bat"
 :: ========================================================
 :: 4. KIỂM TRA VÀ CÀI ĐẶT THƯ VIỆN ĐẦY ĐỦ
 :: ========================================================
-python -c "import websockets, psutil, win32api, requests" >nul 2>&1
+python -c "from websockets.asyncio.client import connect; import psutil, win32api, requests" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [*] Đang cài đặt / cập nhật thư viện cho Agent...
     python -m pip install --upgrade pip >nul 2>&1
     if exist "requirements.txt" (
         pip install -r requirements.txt
     ) else (
-        pip install websockets psutil pywin32 requests
+        pip install "websockets>=13.0" psutil pywin32 requests
     )
     if !errorlevel! neq 0 (
         echo [LỖI] Cài đặt thư viện thất bại! Vui lòng kiểm tra kết nối Internet.
@@ -98,17 +98,19 @@ if defined pserver (
 :: ========================================================
 :: 6. GHÉP NỐI THIẾT BỊ HOẶC KHỞI CHẠY AGENT
 :: ========================================================
-if not exist "agent\config.json" (
+set "pair_needed="
+if not exist "agent\config.local.json" set "pair_needed=1"
+if /i "%~1"=="--pair" set "pair_needed=1"
+if defined pair_needed (
     echo.
     echo [*] Thiết bị chưa ghép nối với máy Cha Mẹ.
-    :ask_pair_code
     set "pcode="
     set /p "pcode=Nhập mã ghép nối từ Cha Mẹ: "
     if "!pcode!"=="" (
         echo [!] Mã ghép nối không được để trống!
-        goto ask_pair_code
+        exit /b 1
     )
-    echo [*] Đang tiến hành ghép nối thiết bị với mã !pcode!...
+    echo [*] Đang tiến hành ghép nối thiết bị với máy chủ Cha Mẹ...
     python "agent\agent_main.py" --pair-code "!pcode!" --server "!pserver!"
 ) else (
     echo.

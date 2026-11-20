@@ -1,31 +1,53 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
+from pathlib import Path
+from http.cookiejar import CookieJar
 import json
+import sys
+import urllib.error
 import urllib.request
 import webbrowser
 
-API_BASE = "http://127.0.0.1:8008"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
+from cloud_sync import dashboard_enrollment, load_agent_config
+
+
+config = load_agent_config()
+API_BASE = config["backend_url"].rstrip("/")
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+signed_in = False
+
+
+def request_json(endpoint, data=None, method="GET", headers=None):
+    payload = json.dumps(data).encode("utf-8") if data is not None else None
+    headers = {"Content-Type": "application/json", **(headers or {})}
+    request = urllib.request.Request(API_BASE + endpoint, data=payload, headers=headers, method=method)
+    with opener.open(request, timeout=3) as response:
+        return json.load(response)
+
 
 def send_api(endpoint, data=None, method="GET"):
-    """Gửi HTTP request bằng urllib, tự động thử cổng 8008 và 8000."""
-    global API_BASE
-    for port in [8008, 8000, 8001, 8080]:
-        base = f"http://127.0.0.1:{port}"
-        try:
-            url = f"{base}{endpoint}"
-            payload = json.dumps(data).encode("utf-8") if data is not None else None
-            req = urllib.request.Request(
-                url, 
-                data=payload, 
-                headers={"Content-Type": "application/json"} if payload is not None else {}, 
-                method=method
-            )
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                API_BASE = base
-                return json.loads(resp.read().decode("utf-8")), None
-        except Exception:
-            continue
-    return None, "Không thể kết nối Backend Server trên cổng 8008 hoặc 8000"
+    global signed_in
+    try:
+        if not signed_in:
+            enrollment = dashboard_enrollment(config)
+            if not enrollment:
+                return None, "Hãy mở Góc Của Con từ Agent đã ghép nối."
+            headers = {"Authorization": f"Bearer {enrollment}"}
+            profile = request_json("/children/assigned", headers=headers)
+            pin = simpledialog.askstring("Đăng nhập", f"Nhập PIN của {profile['name']}", parent=root, show="*")
+            if not pin:
+                return None, "Cần nhập PIN để đăng nhập."
+            request_json("/children/login", {"child_id": profile["id"], "pin": pin}, "POST", headers)
+            signed_in = True
+        return request_json(endpoint, data, method), None
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            signed_in = False
+        return None, json.load(error).get("detail", "Yêu cầu bị từ chối.")
+    except (OSError, ValueError):
+        return None, "Không thể kết nối Backend Server."
+
 
 def open_url(target):
     """Mở trang web trong trình duyệt mặc định."""

@@ -89,6 +89,16 @@ trap 'exit 143' TERM
 # 6. Tự động lấy địa chỉ IP LAN của máy Cha Mẹ
 LAN_IP=$("$VENV_PYTHON" -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('8.8.8.8', 80)); print(s.getsockname()[0]); s.close()" 2>/dev/null || echo "127.0.0.1")
 
+if [ -z "${MMT_PARENT_PASSWORD:-}" ]; then
+    read -r -s -p "Đặt mật khẩu cho tài khoản parent: " MMT_PARENT_PASSWORD
+    echo
+    if [ -z "$MMT_PARENT_PASSWORD" ]; then
+        echo "[LỖI] Cần đặt mật khẩu phụ huynh."
+        exit 1
+    fi
+fi
+export MMT_PARENT_PASSWORD
+
 # 7. Khởi động Backend
 echo "[*] Đang khởi động Máy chủ Backend (Cổng $PORT)..."
 export PYTHONPATH="$BASE_DIR:${PYTHONPATH:-}"

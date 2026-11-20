@@ -1,13 +1,15 @@
-let API_BASE = "http://127.0.0.1:8008";
-        let WS_BASE = "ws://127.0.0.1:8008";
+const enrollment = new URLSearchParams(location.hash.slice(1)).get("device");
+if (enrollment) {
+    sessionStorage.setItem("mmtEnrollment", enrollment);
+    history.replaceState(null, "", location.pathname + location.search);
+}
+function enrollmentHeaders() {
+    return { Authorization: "Bearer " + (sessionStorage.getItem("mmtEnrollment") || "") };
+}
+let socketRetry;
 
-        if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-            const host = window.location.hostname || "127.0.0.1";
-            const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
-            const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-            API_BASE = `${window.location.protocol}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-            WS_BASE = `${wsProto}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-        }
+const API_BASE = location.origin;
+const WS_BASE = API_BASE.replace(/^http/, "ws");
 
         let ws = null;
         let countdownInterval = null;
@@ -180,69 +182,24 @@ let API_BASE = "http://127.0.0.1:8008";
         setInterval(updateClock, 1000);
         updateClock();
 
-        // --- TỰ ĐỘNG DÒ TÌM CỔNG BACKEND HOẠT ĐỘNG ---
-        async function autoDetectBackendPort() {
-            if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-                const host = window.location.hostname || "127.0.0.1";
-                const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
-                const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-                API_BASE = `${window.location.protocol}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-                WS_BASE = `${wsProto}//${host}${window.location.port ? ':' + window.location.port : ''}`;
-                const portEl = document.getElementById("sidebar-port");
-                if (portEl) portEl.textContent = port;
-                const statusEl = document.getElementById("sidebar-backend-status");
-                if (statusEl) statusEl.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Trực tuyến (${host}:${port})`;
-                const banner = document.getElementById("server-offline-banner");
-                if (banner) banner.classList.add("hidden");
-                return;
-            }
-
-            const candidatePorts = [8008, 8000, 8001, 8080];
-            const currentPort = window.location.port;
-            if (currentPort && !candidatePorts.includes(parseInt(currentPort))) {
-                candidatePorts.unshift(parseInt(currentPort));
-            }
-
-            for (const port of candidatePorts) {
-                try {
-                    const testUrl = `http://127.0.0.1:${port}/usage-stats/`;
-                    const ctrl = new AbortController();
-                    const timer = setTimeout(() => ctrl.abort(), 800);
-                    const res = await fetch(testUrl, { signal: ctrl.signal });
-                    clearTimeout(timer);
-                    if (res.ok) {
-                        API_BASE = `http://127.0.0.1:${port}`;
-                        WS_BASE = `ws://127.0.0.1:${port}`;
-                        document.getElementById("sidebar-port").textContent = port;
-                        document.getElementById("sidebar-backend-status").innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Trực tuyến (Cổng ${port})`;
-                        document.getElementById("server-offline-banner").classList.add("hidden");
-                        return;
-                    }
-                } catch (e) {}
-            }
-            document.getElementById("server-offline-banner").classList.remove("hidden");
-            document.getElementById("sidebar-backend-status").innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> Mất kết nối`;
-        }
-
-        function changeBackendUrl() {
-            const input = document.getElementById("custom-backend-url").value.trim();
-            if (input) {
-                API_BASE = input.replace(/\/$/, "");
-                WS_BASE = API_BASE.replace(/^http/, "ws");
-                initWebSocket();
-                fetchActiveChild();
-                fetchAllowedRules();
-                fetchUsageStats();
-                fetchChildRequests();
-                document.getElementById("server-offline-banner").classList.add("hidden");
-            }
+        function showBackendAddress() {
+            const port = location.port || (location.protocol === "https:" ? "443" : "80");
+            const portElement = document.getElementById("sidebar-port");
+            if (portElement) portElement.textContent = port;
+            const status = document.getElementById("sidebar-backend-status");
+            if (status) status.textContent = `Máy chủ ${location.host}`;
         }
 
         // --- KHỞI TẠO WEBSOCKET ĐỂ NHẬN LỆNH THỜI GIAN THỰC ---
         function initWebSocket() {
+            clearTimeout(socketRetry);
+            if (!currentChild) return;
             const wsBadge = document.getElementById("ws-badge");
             try {
-                if (ws) ws.close();
+                if (ws) {
+                    ws.onclose = null;
+                    ws.close();
+                }
                 ws = new WebSocket(`${WS_BASE}/ws/agent/child_pc_01`);
 
                 ws.onopen = () => {
@@ -260,7 +217,7 @@ let API_BASE = "http://127.0.0.1:8008";
                 ws.onclose = () => {
                     wsBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600";
                     wsBadge.innerHTML = '<span class="w-2 h-2 mr-1.5 rounded-full bg-slate-400"></span> Mất kết nối';
-                    setTimeout(initWebSocket, 4000);
+                    socketRetry = setTimeout(initWebSocket, 4000);
                 };
 
                 ws.onerror = () => {
@@ -268,7 +225,7 @@ let API_BASE = "http://127.0.0.1:8008";
                     wsBadge.innerHTML = '<span class="w-2 h-2 mr-1.5 rounded-full bg-rose-500"></span> Lỗi mạng';
                 };
             } catch (err) {
-                setTimeout(initWebSocket, 4000);
+                socketRetry = setTimeout(initWebSocket, 4000);
             }
         }
 
@@ -284,11 +241,12 @@ let API_BASE = "http://127.0.0.1:8008";
                 showDesktopNotification("🔓 Thông báo từ Cha Mẹ", "Máy tính đã được mở khóa!");
                 document.getElementById("emergency-lock-overlay").classList.add("hidden");
                 showToast("🔓 Cha Mẹ đã mở khóa máy tính!", "emerald");
-            } else if (type === "PARENT_MESSAGE") {
+            } else if (type === "PARENT_MESSAGE" || type === "MESSAGE") {
+                const message = data.message || data.data?.message || "";
                 playNotificationSound('ting');
-                showDesktopNotification("💬 Lời nhắn từ Cha Mẹ", data.message || "Cha Mẹ vừa gửi một lời nhắn cho con!");
+                showDesktopNotification("💬 Lời nhắn từ Cha Mẹ", message || "Cha Mẹ vừa gửi một lời nhắn cho con!");
                 const banner = document.getElementById("parent-message-banner");
-                document.getElementById("parent-message-text").innerText = data.message || "";
+                document.getElementById("parent-message-text").innerText = message;
                 banner.classList.remove("hidden");
                 showToast("💬 Cha Mẹ vừa gửi một lời nhắn cho con!", "indigo");
             } else if (type === "REQUEST_DECIDED") {
@@ -365,7 +323,7 @@ let API_BASE = "http://127.0.0.1:8008";
 
             toast.className = `toast p-3 rounded-xl text-xs font-semibold shadow-md flex items-center justify-between ${colorClasses[color] || colorClasses.blue}`;
             toast.innerHTML = `
-                <span>${message}</span>
+                <span>${escapeHtml(message)}</span>
                 <button onclick="this.parentElement.remove()" class="ml-2 font-bold opacity-80 hover:opacity-100">&times;</button>
             `;
             container.appendChild(toast);
@@ -504,8 +462,6 @@ let API_BASE = "http://127.0.0.1:8008";
                 container.innerHTML = allowed.map(r => {
                     const isWeb = r.rule_type === "WEBSITE" || r.target_value.includes(".");
                     const icon = isWeb ? "🌐" : "💻";
-                    const webUrl = r.target_value.startsWith("http") ? r.target_value : `https://${r.target_value}`;
-                    
                     const remBadgeClass = r.is_expired ? "bg-rose-100 text-rose-800" : (r.remaining_minutes <= 15 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800");
 
                     return `
@@ -516,7 +472,7 @@ let API_BASE = "http://127.0.0.1:8008";
                                 </div>
                                 <div>
                                     <div class="font-bold text-xs text-slate-800 flex items-center gap-1.5">
-                                        <span>${r.target_value}</span>
+                                        <span>${escapeHtml(r.target_value)}</span>
                                         <span class="text-[10px] px-1.5 py-0.2 rounded font-semibold ${remBadgeClass}">
                                             ${r.remaining_formatted}
                                         </span>
@@ -529,11 +485,11 @@ let API_BASE = "http://127.0.0.1:8008";
 
                             <div>
                                 ${isWeb ? `
-                                    <button onclick="handleOpenAllowedTarget('${r.target_value}')" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                    <button data-target="${escapeHtml(r.target_value)}" onclick="handleOpenAllowedTarget(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
                                         <span>Mở trang web</span> ↗
                                     </button>
                                 ` : `
-                                    <button onclick="handleOpenAllowedTarget('${r.target_value}')" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                    <button data-target="${escapeHtml(r.target_value)}" onclick="handleOpenAllowedTarget(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
                                         <span>Mở ứng dụng</span> 🚀
                                     </button>
                                 `}
@@ -563,7 +519,7 @@ let API_BASE = "http://127.0.0.1:8008";
                 document.getElementById("active-tracking-title").textContent = targetName;
                 const catEl = document.getElementById("active-tracking-category");
                 if (catEl) {
-                    catEl.innerHTML = `${aiInfo.icon || '📱'} ${aiInfo.category || 'Chưa phân loại'}`;
+                    catEl.textContent = `${aiInfo.icon || '📱'} ${aiInfo.category || 'Chưa phân loại'}`;
                     catEl.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${aiInfo.badge_color || 'bg-blue-100 text-blue-800 border-blue-300'}`;
                 }
                 document.getElementById("active-tracking-time").textContent = "00:00";
@@ -633,8 +589,8 @@ let API_BASE = "http://127.0.0.1:8008";
                     const aiInfo = data.classification || {};
                     const isWeb = targetValue.includes(".") || targetValue.startsWith("http");
                     if (isWeb) {
-                        const webUrl = targetValue.startsWith("http") ? targetValue : `https://${targetValue}`;
-                        window.open(webUrl, '_blank');
+                        const webUrl = new URL(/^https?:\/\//i.test(targetValue) ? targetValue : `https://${targetValue}`);
+                        window.open(webUrl.href, "_blank", "noopener,noreferrer");
                     }
                     showToast(`✅ Đang mở: ${targetValue} • AI gán nhãn: ${aiInfo.icon || '🏷️'} ${aiInfo.category || ''}`, "emerald");
                     startActiveUsageTracking(targetValue, aiInfo);
@@ -642,17 +598,11 @@ let API_BASE = "http://127.0.0.1:8008";
                 }
             } catch (e) {}
 
-            const isWeb = targetValue.includes(".") || targetValue.startsWith("http");
-            if (isWeb) {
-                const webUrl = targetValue.startsWith("http") ? targetValue : `https://${targetValue}`;
-                window.open(webUrl, '_blank');
-            }
-            startActiveUsageTracking(targetValue, { category: 'Ứng dụng khác', icon: '🌐' });
+            showToast("Không thể kiểm tra quyền truy cập. Hãy thử lại khi có kết nối.", "rose");
         }
 
         // --- QUẢN LÝ HỒ SƠ CON CÁI & ĐĂNG NHẬP MÁY ---
         let currentChild = null;
-        let allChildrenList = [];
         let pendingLoginChildId = null;
 
         async function fetchActiveChild() {
@@ -672,43 +622,32 @@ let API_BASE = "http://127.0.0.1:8008";
         }
 
         async function openChildLoginModal() {
+            const list = document.getElementById("child-login-list");
+            const box = document.getElementById("pin-login-box");
+            box.classList.add("hidden");
+            pendingLoginChildId = null;
+            document.getElementById("childPinInput").value = "";
+            document.getElementById("child-login-modal").classList.remove("hidden");
+            list.textContent = "Đang tải hồ sơ…";
             try {
-                const res = await fetch(`${API_BASE}/children/`);
-                if (res.ok) {
-                    allChildrenList = await res.json();
-                    const listEl = document.getElementById("child-login-list");
-                    if (allChildrenList.length === 0) {
-                        listEl.innerHTML = `<p class="text-slate-400 text-xs italic py-4 text-center col-span-full">Chưa có hồ sơ trẻ nào. Phụ huynh hãy tạo hồ sơ trên Trạm điều khiển!</p>`;
-                    } else {
-                        listEl.innerHTML = allChildrenList.map(c => `
-                            <div onclick="selectChildToLogin(${c.id}, '${c.name}', '${c.pin || ''}')" class="cursor-pointer p-4 rounded-2xl border-2 ${currentChild && currentChild.id === c.id ? 'border-blue-500 bg-blue-50/70' : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'} text-center transition flex flex-col items-center gap-1.5 shadow-xs">
-                                <span class="text-4xl p-2 bg-white rounded-2xl shadow-xs border border-slate-100">${c.avatar || '🧒'}</span>
-                                <span class="font-bold text-xs text-slate-800">${c.name}</span>
-                                <span class="text-[10px] text-slate-500">${c.age} tuổi</span>
-                                ${currentChild && currentChild.id === c.id ? '<span class="text-[9px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full mt-1">Đang đăng nhập</span>' : ''}
-                            </div>
-                        `).join("");
-                    }
-                    document.getElementById("pin-login-box").classList.add("hidden");
-                    document.getElementById("childPinInput").value = "";
-                    document.getElementById("child-login-modal").classList.remove("hidden");
+                const res = await fetch(`${API_BASE}/children/assigned`, { headers: enrollmentHeaders() });
+                if (!res.ok) {
+                    list.textContent = "Hãy mở Góc Của Con từ Agent trên máy đã ghép nối.";
+                    return;
                 }
-            } catch (e) {}
+                const child = await res.json();
+                pendingLoginChildId = child.id;
+                list.textContent = `${child.avatar} ${child.name}`;
+                document.getElementById("pin-prompt-text").textContent = "Nhập mã PIN để đăng nhập";
+                box.classList.remove("hidden");
+                document.getElementById("childPinInput").focus();
+            } catch (error) {
+                list.textContent = "Không thể kết nối máy chủ.";
+            }
         }
 
         function closeChildLoginModal() {
             document.getElementById("child-login-modal").classList.add("hidden");
-        }
-
-        function selectChildToLogin(childId, name, pin) {
-            if (!pin) {
-                doChildLogin(childId, "");
-            } else {
-                pendingLoginChildId = childId;
-                document.getElementById("pin-prompt-text").innerText = `Nhập mã PIN để đăng nhập với tư cách ${name}:`;
-                document.getElementById("pin-login-box").classList.remove("hidden");
-                document.getElementById("childPinInput").focus();
-            }
         }
 
         async function submitChildPinLogin() {
@@ -721,7 +660,7 @@ let API_BASE = "http://127.0.0.1:8008";
             try {
                 const res = await fetch(`${API_BASE}/children/login`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json", ...enrollmentHeaders() },
                     body: JSON.stringify({ child_id: childId, pin: pin })
                 });
                 if (res.ok) {
@@ -730,7 +669,10 @@ let API_BASE = "http://127.0.0.1:8008";
                     showToast(`🎉 ${data.message}`, "emerald");
                     countdownSeconds = -1;
                     lastServerDailyLimit = null;
-                    fetchActiveChild();
+                    await fetchActiveChild();
+                    initWebSocket();
+                    fetchAllowedRules();
+                    fetchChildRequests();
                     fetchUsageStats();
                 } else {
                     const err = await res.json();
@@ -988,7 +930,7 @@ let API_BASE = "http://127.0.0.1:8008";
                     <tr class="hover:bg-slate-50">
                         <td class="py-2.5 font-semibold text-slate-800 flex items-center gap-2">
                             <span>${item.icon || '📱'}</span>
-                            <span>${item.app_name}</span>
+                            <span>${escapeHtml(item.app_name)}</span>
                         </td>
                         <td class="py-2.5">
                             <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${item.badge_color}">
@@ -1036,6 +978,8 @@ let API_BASE = "http://127.0.0.1:8008";
                     let statusBadge = "";
                     if (r.status === "APPROVED") {
                         statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ ĐÃ ĐỒNG Ý</span>`;
+                    } else if (r.status === "EXPIRED") {
+                        statusBadge = '<span class="text-xs text-slate-500">Đã hết hạn</span>';
                     } else if (r.status === "REJECTED") {
                         statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">❌ CHƯA ĐỒNG Ý</span>`;
                     } else {
@@ -1045,16 +989,16 @@ let API_BASE = "http://127.0.0.1:8008";
                     return `
                         <div class="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
                             <div class="flex items-center justify-between">
-                                <span class="font-bold text-xs text-slate-800">${r.target_detail}</span>
+                                <span class="font-bold text-xs text-slate-800">${escapeHtml(r.target_detail)}</span>
                                 ${statusBadge}
                             </div>
                             <div class="text-[11px] text-slate-500 italic">
-                                "Lý do của con: ${r.reason_from_child || 'Không có lý do'}"
+                                "Lý do của con: ${escapeHtml(r.reason_from_child || 'Không có lý do')}"
                             </div>
                             ${r.parent_feedback ? `
                                 <div class="mt-1 pt-1.5 border-t border-slate-200 text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
                                     <span>💬 Cha Mẹ dặn:</span>
-                                    <span>"${r.parent_feedback}"</span>
+                                    <span>"${escapeHtml(r.parent_feedback)}"</span>
                                 </div>
                             ` : ''}
                         </div>
@@ -1070,9 +1014,10 @@ let API_BASE = "http://127.0.0.1:8008";
         window.addEventListener("DOMContentLoaded", async () => {
             updateSoundUI();
             initCountdownTicker();
-            await autoDetectBackendPort();
+            showBackendAddress();
+            await fetchActiveChild();
             initWebSocket();
-            fetchActiveChild();
+            if (!currentChild) openChildLoginModal();
             fetchAllowedRules();
             fetchUsageStats();
             fetchChildRequests();

@@ -1,16 +1,14 @@
 import secrets
-import string
-import uuid
 from typing import List
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import database, models, schemas
-from ..services.classification import extract_target_name
 from ..services.realtime import manager
 
 
@@ -21,12 +19,8 @@ PAIRING_CODE_TTL_MINUTES = 10
 
 
 def generate_pairing_code() -> str:
-    """Tạo mã ghép nối 6 chữ số."""
-    digits = "".join(
-        secrets.choice(string.digits)
-        for _ in range(6)
-    )
-    return f"MMT-{digits}"
+    """Generate a short-lived, single-use enrollment code."""
+    return f"MMT-{secrets.token_hex(6).upper()}"
 
 
 def _generate_unique_pairing_code(db: Session) -> str:
@@ -46,9 +40,6 @@ def _generate_unique_pairing_code(db: Session) -> str:
         status_code=503,
         detail="Không thể tạo mã ghép nối. Vui lòng thử lại."
     )
-
-
-from sqlalchemy import or_
 
 
 def _build_device_config(
@@ -93,8 +84,13 @@ def _build_device_config(
                 models.AppWebRule.device_id.is_(None)
             )
         )
+        .order_by(models.AppWebRule.device_id.is_not(None).desc())
         .all()
     )
+    by_target = {}
+    for rule in rules:
+        by_target.setdefault(rule.target_value, rule)
+    rules = by_target.values()
 
     allowed_rules = [
         rule.target_value
@@ -132,137 +128,53 @@ def _build_device_config(
     )
 
 
-@router.post(
-    "/create",
-    response_model=schemas.DeviceResponse
-)
-async def create_device_profile(
-    dev_data: schemas.DeviceCreateRequest,
-    db: Session = Depends(database.get_db)
-):
-    """Create a device profile and its initial configuration."""
+def refresh_pairing_code(db, device):
+    device.pairing_code = _generate_unique_pairing_code(db)
+    device.pairing_expires_at = (
+        datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=PAIRING_CODE_TTL_MINUTES)
+    )
 
-    code = _generate_unique_pairing_code(db)
 
-    new_device = models.Device(
-        device_name=dev_data.device_name.strip(),
-        pairing_code=code,
-        pairing_expires_at=(
-            datetime.utcnow()
-            + timedelta(minutes=PAIRING_CODE_TTL_MINUTES)
-        ),
-        child_profile_id=dev_data.child_profile_id,
+def register_child_device(db, child, device_name):
+    device = models.Device(
+        child_profile_id=child.id,
+        device_name=device_name,
         status="PENDING_PAIR",
         is_paired=False,
-        anti_tamper_active=True,
-        content_filter_active=True
     )
+    refresh_pairing_code(db, device)
+    db.add(device)
+    return device
 
-    db.add(new_device)
 
+@router.post("/create", response_model=schemas.DeviceResponse)
+def create_device_profile(
+    dev_data: schemas.DeviceCreateRequest,
+    db: Session = Depends(database.get_db),
+):
+    """Enroll a device for a legacy profile that has no device yet."""
+    if dev_data.child_profile_id is None:
+        raise HTTPException(422, "Cần chỉ định hồ sơ trẻ.")
+    child = db.get(models.ChildProfile, dev_data.child_profile_id)
+    if child is None:
+        raise HTTPException(404, "Không tìm thấy hồ sơ trẻ.")
+    if db.query(models.Device).filter_by(child_profile_id=child.id).first():
+        raise HTTPException(409, "Hồ sơ này đã có thiết bị.")
+    name = dev_data.device_name.strip()
+    if not name or len(name) > 100:
+        raise HTTPException(422, "Tên thiết bị phải có từ 1 đến 100 ký tự.")
+    device = register_child_device(db, child, name)
     try:
         db.commit()
-        db.refresh(new_device)
-    except Exception:
+    except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Không thể tạo thiết bị."
-        )
-
-    # Create initial blocked rules when supplied by the parent.
-    if dev_data.blocked_items:
-        for item in dev_data.blocked_items:
-            clean_item = extract_target_name(item)
-
-            if not clean_item:
-                continue
-
-            rule_type = (
-                "WEBSITE"
-                if "." in clean_item
-                else "APP"
-            )
-
-            existing_rule = (
-                db.query(models.AppWebRule)
-                .filter(
-                    models.AppWebRule.target_value == clean_item
-                )
-                .first()
-            )
-
-            if not existing_rule:
-                db.add(
-                    models.AppWebRule(
-                        device_id=new_device.id,
-                        rule_type=rule_type,
-                        target_value=clean_item,
-                        action="BLOCK",
-                        time_limit_minutes=30,
-                        used_minutes=0
-                    )
-                )
-
-        db.commit()
-
-    # Update the selected child's daily time limit.
-    if dev_data.child_profile_id:
-        child = (
-            db.query(models.ChildProfile)
-            .filter(
-                models.ChildProfile.id == dev_data.child_profile_id
-            )
-            .first()
-        )
-
-        if child and dev_data.daily_limit_minutes:
-            child.daily_limit_minutes = (
-                dev_data.daily_limit_minutes
-            )
-            db.commit()
-
-    child_name = None
-
-    if new_device.child_profile_id:
-        child = (
-            db.query(models.ChildProfile)
-            .filter(
-                models.ChildProfile.id == new_device.child_profile_id
-            )
-            .first()
-        )
-
-        if child:
-            child_name = child.name
-
-    await manager.broadcast_json({
-        "type": "DEVICE_CREATED",
-        "device_id": new_device.id,
-        "device_name": new_device.device_name,
-        "pairing_code": new_device.pairing_code
-    })
-
-    return schemas.DeviceResponse(
-        id=new_device.id,
-        device_name=new_device.device_name,
-        device_hwid=new_device.device_hwid,
-        pairing_code=new_device.pairing_code,
-        is_paired=new_device.is_paired,
-        status=new_device.status,
-        child_profile_id=new_device.child_profile_id,
-        child_name=child_name,
-        platform=new_device.platform,
-        anti_tamper_active=new_device.anti_tamper_active,
-        content_filter_active=new_device.content_filter_active,
-        last_seen=new_device.last_seen,
-        created_at=new_device.created_at
-    )
+        raise HTTPException(409, "Hồ sơ đã có thiết bị hoặc mã đang được sử dụng.") from exc
+    return device
 
 
 @router.post(
     "/pair",
-    response_model=schemas.DeviceConfigResponse
+    response_model=schemas.DevicePairResponse
 )
 async def pair_device(
     pair_data: schemas.DevicePairRequest,
@@ -271,7 +183,7 @@ async def pair_device(
     code = pair_data.pairing_code.strip().upper()
     hwid = pair_data.device_hwid.strip()
 
-    if not hwid:
+    if not hwid or len(hwid) > 100 or hwid == "parent_dashboard":
         raise HTTPException(
             status_code=422,
             detail="device_hwid không được để trống."
@@ -301,7 +213,7 @@ async def pair_device(
     # Kiểm tra thời hạn.
     if (
         not device.pairing_expires_at
-        or device.pairing_expires_at < datetime.utcnow()
+        or device.pairing_expires_at < datetime.now(timezone.utc).replace(tzinfo=None)
     ):
         raise HTTPException(
             status_code=410,
@@ -321,33 +233,41 @@ async def pair_device(
             detail="Thiết bị này đã được đăng ký."
         )
 
-    device.device_hwid = hwid
-    device.is_paired = True
-    device.status = "ONLINE_WAN"
-    device.platform = pair_data.platform or "Linux"
-    device.ip_address = pair_data.ip_address
-    device.last_seen = datetime.utcnow()
+    if not device.child_profile_id:
+        raise HTTPException(409, "Thiết bị chưa được gán cho hồ sơ trẻ.")
 
-    # Mã ghép nối chỉ được sử dụng một lần.
-    device.pairing_code = None
-    device.pairing_expires_at = None
-
-    # Token phiên riêng cho thiết bị.
-    device.pairing_token = secrets.token_urlsafe(32)
-
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    token = secrets.token_urlsafe(32)
     try:
+        claimed = db.execute(
+            update(models.Device).where(
+                models.Device.id == device.id,
+                models.Device.pairing_code == code,
+                models.Device.pairing_expires_at > now,
+                models.Device.is_paired.is_(False),
+            ).values(
+                device_hwid=hwid,
+                is_paired=True,
+                status="OFFLINE",
+                platform=pair_data.platform or "Linux",
+                ip_address=pair_data.ip_address,
+                last_seen=now,
+                pairing_code=None,
+                pairing_expires_at=None,
+                pairing_token=token,
+            )
+        )
+        if claimed.rowcount != 1:
+            raise HTTPException(409, "Mã ghép nối đã thay đổi hoặc hết hạn.")
         db.commit()
         db.refresh(device)
-    except Exception:
+    except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Không thể hoàn tất ghép nối."
-        )
+        raise HTTPException(409, "Thiết bị này đã được đăng ký.") from exc
 
     config = _build_device_config(db, device)
 
-    await manager.broadcast_json({
+    await manager.send_to_device("parent_dashboard", {
         "type": "DEVICE_PAIRED",
         "device_id": device.id,
         "device_name": device.device_name,
@@ -355,7 +275,9 @@ async def pair_device(
         "platform": device.platform,
     })
 
-    return config
+    return schemas.DevicePairResponse(
+        **config.model_dump(), device_credential=f"{device.id}.{token}"
+    )
 
 
 @router.get(
@@ -434,6 +356,7 @@ def get_devices(
 )
 def get_device_config(
     hwid: str,
+    request: Request,
     db: Session = Depends(database.get_db)
 ):
     """Return the latest configuration for a device."""
@@ -457,7 +380,10 @@ def get_device_config(
             detail="Không tìm thấy thiết bị"
         )
 
-    device.last_seen = datetime.utcnow()
+    caller = getattr(request.state, "device", None)
+    if caller and caller.id != device.id:
+        raise HTTPException(404, "Không tìm thấy thiết bị.")
+    device.last_seen = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(device)
 
@@ -469,7 +395,7 @@ def get_device_config(
 
 
 @router.delete("/{device_id}")
-def delete_device(
+async def delete_device(
     device_id: str,
     db: Session = Depends(database.get_db)
 ):
@@ -494,11 +420,16 @@ def delete_device(
             detail="Không tìm thấy thiết bị"
         )
 
+    if device.child_profile_id:
+        raise HTTPException(409, "Hãy quản lý thiết bị từ hồ sơ trẻ.")
+    hwid = device.device_hwid
     db.query(models.TimeLimit).filter(models.TimeLimit.device_id == device.id).delete()
     db.query(models.AppWebRule).filter(models.AppWebRule.device_id == device.id).delete()
 
     db.delete(device)
     db.commit()
+    if hwid:
+        await manager.close_device(hwid)
 
     return {
         "status": "success",
