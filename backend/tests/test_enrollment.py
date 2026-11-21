@@ -116,6 +116,11 @@ def test_approved_web_usage_and_adult_blocking(parent_credentials):
             "child_id": child["id"], "pin": "2580",
         }).status_code == 200
 
+        session = browser.get("/web-tracking/session").json()
+        extension.headers["Authorization"] = f"Bearer {session['token']}"
+        assert browser.get("/web-tracking/policy").status_code == 401
+        assert "lesson.example" not in extension.get("/web-tracking/policy").json()["targets"]
+
         response = browser.post("/requests/", json={
             "request_type": "PERMISSION_WEB",
             "target_detail": "https://WWW.LESSON.EXAMPLE./chapter?topic=math",
@@ -127,9 +132,8 @@ def test_approved_web_usage_and_adult_blocking(parent_credentials):
         request_id = response.json()["id"]
         assert parent.patch(f"/requests/{request_id}", json={"status": "APPROVED"}).status_code == 200
 
-        session = browser.get("/web-tracking/session").json()
-        assert "lesson.example" in session["targets"]
-        extension.headers["Authorization"] = f"Bearer {session['token']}"
+        policy = extension.get("/web-tracking/policy", headers={"Origin": "chrome-extension://test"})
+        assert policy.status_code == 200 and "lesson.example" in policy.json()["targets"]
         assert extension.get("/rules/").status_code == 401
         assert browser.post("/web-tracking/usage", json={
             "host": "lesson.example", "duration_seconds": 17,

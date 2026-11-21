@@ -507,11 +507,15 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             const status = document.getElementById("web-tracking-status");
             try {
                 const response = await fetch(`${API_BASE}/web-tracking/session`);
-                if (!response.ok) return;
+                if (!response.ok) {
+                    status.textContent = "Chưa kết nối được tiện ích. Mở lại Góc Của Con từ Agent và đăng nhập PIN.";
+                    status.classList.remove("hidden");
+                    return;
+                }
                 window.dispatchEvent(new CustomEvent("mmt-web-connect", { detail: await response.json() }));
                 setTimeout(() => {
                     status.textContent = document.documentElement.dataset.mmtWebTracking === "connected"
-                        ? "Tiện ích MMT đang đo thời gian của tab web được phép."
+                        ? "Tiện ích MMT đang đo thời gian của tab web được phép trong hồ sơ trình duyệt này."
                         : "Cài tiện ích MMT cho Chrome hoặc Edge để đếm thời gian và chặn trang 18+ trong trình duyệt.";
                     status.classList.remove("hidden");
                 }, 800);

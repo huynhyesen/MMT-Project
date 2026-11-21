@@ -250,7 +250,7 @@ async def authorize_request(request: Request, call_next):
     method = request.method
     if method == "OPTIONS":
         return await call_next(request)
-    if (method, path) == ("POST", "/web-tracking/usage"):
+    if (method, path) in {("GET", "/web-tracking/policy"), ("POST", "/web-tracking/usage")}:
         request.state.device = security.resolve_device(request, web_tracking=True)
         if request.state.device:
             return await call_next(request)
@@ -579,15 +579,26 @@ def effective_web_rules(db, device):
     return rules
 
 
-@app.get("/web-tracking/session")
-def web_tracking_session(request: Request, db: Session = Depends(database.get_db)):
-    device = client_device(request)
-    targets = [
+def web_tracking_targets(db, device):
+    return [
         host for host, rule in effective_web_rules(db, device).items()
         if rule.action == "ALLOW" and not is_adult_host(host)
     ]
+
+
+@app.get("/web-tracking/session")
+def web_tracking_session(request: Request, db: Session = Depends(database.get_db)):
+    device = client_device(request)
     return JSONResponse(
-        {"token": security.web_tracking_token(device), "targets": targets},
+        {"token": security.web_tracking_token(device), "targets": web_tracking_targets(db, device)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/web-tracking/policy")
+def web_tracking_policy(request: Request, db: Session = Depends(database.get_db)):
+    return JSONResponse(
+        {"targets": web_tracking_targets(db, client_device(request))},
         headers={"Cache-Control": "no-store"},
     )
 

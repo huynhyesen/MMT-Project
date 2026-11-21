@@ -10,6 +10,8 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         let ws = null;
         let cachedUsageItems = [];
+        let currentUsageTag = "ALL";
+        let usageRequestId = 0;
         let currentActiveTab = 'overview';
 
         // --- HỆ THỐNG ÂM THANH THÔNG BÁO "TING" & DESKTOP NOTIFICATION ---
@@ -147,6 +149,7 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             if (window.innerWidth < 768 && mobileNav && !mobileNav.classList.contains('hidden')) {
                 mobileNav.classList.add('hidden');
             }
+            refreshVisibleUsageStats();
         }
 
         function toggleMobileMenu() {
@@ -460,11 +463,21 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             }
         }
 
+        function refreshVisibleUsageStats() {
+            if (!document.hidden && ["overview", "stats"].includes(currentActiveTab)) {
+                fetchUsageStats();
+            }
+        }
+
         async function fetchUsageStats() {
             const listEl = document.getElementById("usage-list");
+            const requestId = ++usageRequestId;
+            const childId = selectedChildId;
             try {
-                const response = await consoleFetch(`${API_BASE}/usage-stats/${selectedChildId ? "?child_id=" + selectedChildId : ""}`);
+                const response = await consoleFetch(`${API_BASE}/usage-stats/${childId ? "?child_id=" + childId : ""}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
+                if (requestId !== usageRequestId || childId !== selectedChildId) return;
 
                 document.getElementById("stat-total-time").innerText = data.total_formatted;
                 document.getElementById("stat-learning-time").innerText = data.learning_formatted || "0 phút";
@@ -476,8 +489,9 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                 updateParentChart(data.learning_minutes, data.entertainment_minutes, data.social_minutes);
 
                 cachedUsageItems = data.items || [];
-                renderUsageList(cachedUsageItems);
+                renderFilteredUsage();
             } catch (error) {
+                if (requestId !== usageRequestId || childId !== selectedChildId) return;
                 if (listEl) listEl.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center">Lỗi khi tải báo cáo: ${escapeHtml(error.message)}</p>`;
             }
         }
@@ -488,12 +502,15 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             });
             btn.className = "usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-emerald-600 text-white";
 
-            if (tag === "ALL") {
-                renderUsageList(cachedUsageItems);
-            } else {
-                const filtered = cachedUsageItems.filter(item => item.tag === tag);
-                renderUsageList(filtered);
-            }
+            currentUsageTag = tag;
+            renderFilteredUsage();
+        }
+
+        function renderFilteredUsage() {
+            const items = currentUsageTag === "ALL"
+                ? cachedUsageItems
+                : cachedUsageItems.filter(item => item.tag === currentUsageTag);
+            renderUsageList(items);
         }
 
         function renderUsageList(items) {
@@ -840,7 +857,6 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             selectedChildId = childId;
             await fetchChildren();
             switchParentTab("stats");
-            fetchUsageStats();
         }
 
         async function deleteChild(childId) {
@@ -1125,8 +1141,9 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             fetchRules();
             fetchCurfew();
             await fetchChildren();
-            fetchUsageStats();
             fetchAlerts();
 
             switchParentTab('overview');
+            document.addEventListener("visibilitychange", refreshVisibleUsageStats);
+            setInterval(refreshVisibleUsageStats, 10000);
         });
