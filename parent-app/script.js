@@ -613,6 +613,10 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                     const data = await res.json();
                     document.getElementById("curfew-bedtime-input").value = data.bedtime;
                     document.getElementById("curfew-wakeup-input").value = data.wakeup_time;
+                    document.getElementById("curfew-timezone-input").value =
+                        data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+                    document.getElementById("curfew-server-time").textContent =
+                        `Giờ app kiểm tra lúc tải: ${data.current_time} (${data.timezone || "giờ máy chủ"})`;
                     
                     const badge = document.getElementById("curfew-status-badge");
                     const overviewCurfewText = document.getElementById("overview-curfew-text");
@@ -625,16 +629,16 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                     if (data.is_within_curfew) {
                         if (badge) {
                             badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse";
-                            badge.innerHTML = "🌙 Máy con đang bị vô hiệu hóa";
+                            badge.textContent = "🌙 Đang trong giờ giới nghiêm";
                         }
                         if (overviewCurfewStatus) {
                             overviewCurfewStatus.className = "text-[10px] text-rose-600 font-bold animate-pulse";
-                            overviewCurfewStatus.textContent = "🌙 Đang bị khóa";
+                            overviewCurfewStatus.textContent = "🌙 Đang giới nghiêm";
                         }
                     } else {
                         if (badge) {
                             badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300";
-                            badge.innerHTML = "🟢 Máy con đang mở";
+                            badge.textContent = "🟢 Ngoài giờ giới nghiêm";
                         }
                         if (overviewCurfewStatus) {
                             overviewCurfewStatus.className = "text-[10px] text-emerald-600 font-semibold";
@@ -651,20 +655,30 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
         }
 
         async function saveCurfewSettings() {
-            const bedtime = document.getElementById("curfew-bedtime-input").value || "22:00";
-            const wakeup = document.getElementById("curfew-wakeup-input").value || "06:00";
+            const bedtime = document.getElementById("curfew-bedtime-input").value;
+            const wakeup = document.getElementById("curfew-wakeup-input").value;
+            const timezone = document.getElementById("curfew-timezone-input").value.trim();
+            if (!bedtime || !wakeup || !timezone) {
+                showToast("Nhập giờ bắt đầu, giờ kết thúc và múi giờ.", "danger");
+                return;
+            }
             try {
                 const res = await consoleFetch(`${API_BASE}/curfew/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ bedtime: bedtime, wakeup_time: wakeup })
+                    body: JSON.stringify({ bedtime, wakeup_time: wakeup, timezone })
                 });
-                if (res.ok) {
-                    showToast(`🌙 Đã cập nhật giờ vô hiệu hóa: ${bedtime} (Tối) → ${wakeup} (Sáng)!`, "success");
-                    fetchCurfew();
+                if (!res.ok) {
+                    const data = await res.json();
+                    const message = typeof data.detail === "string"
+                        ? data.detail
+                        : "Kiểm tra giờ và múi giờ, ví dụ Asia/Ho_Chi_Minh.";
+                    throw new Error(message);
                 }
-            } catch (e) {
-                alert("Lỗi lưu khung giờ: " + e.message);
+                showToast(`Đã lưu giờ giới nghiêm ${bedtime}–${wakeup} (${timezone}).`, "success");
+                await fetchCurfew();
+            } catch (error) {
+                showToast("Không lưu được giờ giới nghiêm. " + error.message, "danger");
             }
         }
 

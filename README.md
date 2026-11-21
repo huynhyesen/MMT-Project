@@ -67,6 +67,12 @@ Trẻ có thể xin mở web trong **Xin phép**. Sau khi phụ huynh duyệt, t
 
 Tiện ích chặn các tên miền và mẫu tên miền 18+ trong danh sách lọc, kể cả khi nhập địa chỉ trực tiếp. Agent bổ sung lớp chặn các tên miền phổ biến qua file `hosts` khi chạy với quyền quản trị. Phạm vi lọc phụ thuộc vào danh sách tên miền và trình duyệt đã bật tiện ích. Nội dung 18+ bên trong một trang thông thường có thể lọt qua.
 
+### 4. Đặt giờ giới nghiêm
+
+Trong dashboard phụ huynh, mở **Giờ giới nghiêm**, nhập giờ bắt đầu, giờ kết thúc và múi giờ rồi bấm lưu. Ví dụ tại Việt Nam, chọn `Asia/Ho_Chi_Minh`. Nhập `00:55` cho 12 giờ 55 phút đêm. Khung `00:55–06:00` bắt đầu lúc 00:55 và kết thúc đúng lúc 06:00. Dashboard hiển thị giờ mà app dùng để kiểm tra.
+
+Sau khi cập nhật từ phiên bản cũ, hãy lưu lại khung giờ một lần để ghi nhận múi giờ. Cấu hình cũ chưa có múi giờ sẽ tiếp tục dùng đồng hồ của máy chủ cho đến khi lưu.
+
 ## Cập nhật và khôi phục
 
 - Khi cập nhật, tắt Backend và Agent rồi sao lưu `backend/app.db` trên máy phụ huynh. Trong thư mục dự án đang ở nhánh `version1`, chạy `git pull --ff-only origin version1` trên hai máy. Khởi động lại Backend và Agent, sau đó bấm **Tải lại** trên thẻ tiện ích Chrome/Edge.

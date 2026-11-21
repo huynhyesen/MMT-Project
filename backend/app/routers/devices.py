@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import database, models, schemas
+from ..services.curfew import current_curfew
 from ..services.realtime import manager
 
 
@@ -59,21 +60,7 @@ def _build_device_config(
             .first()
         )
 
-    # Chỉ lấy time limit của thiết bị này.
-    # device_id=None được xem là cấu hình dùng chung.
-    time_limit = (
-        db.query(models.TimeLimit)
-        .filter(
-            or_(
-                models.TimeLimit.device_id == device.id,
-                models.TimeLimit.device_id.is_(None)
-            )
-        )
-        .order_by(
-            models.TimeLimit.device_id.is_not(None).desc()
-        )
-        .first()
-    )
+    curfew = current_curfew(db)
 
     # Chỉ lấy rule riêng của thiết bị và rule dùng chung.
     rules = (
@@ -111,16 +98,8 @@ def _build_device_config(
         daily_limit_minutes=(
             child.daily_limit_minutes if child else 120
         ),
-        bedtime=(
-            time_limit.bedtime
-            if time_limit and time_limit.bedtime
-            else "22:00"
-        ),
-        wakeup_time=(
-            time_limit.wakeup_time
-            if time_limit and time_limit.wakeup_time
-            else "06:00"
-        ),
+        bedtime=curfew.bedtime,
+        wakeup_time=curfew.wakeup_time,
         allowed_rules=allowed_rules,
         blocked_rules=blocked_rules,
         anti_tamper_enabled=device.anti_tamper_active,

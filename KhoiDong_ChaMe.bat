@@ -38,14 +38,14 @@ if not exist ".venv\Scripts\python.exe" (
 call ".venv\Scripts\activate.bat"
 
 :: 4. Kiểm tra và cài đặt thư viện nếu thiếu
-python -c "import fastapi, uvicorn, sqlalchemy, pydantic, websockets" >nul 2>&1
+python -c "import fastapi, uvicorn, sqlalchemy, pydantic, websockets, tzdata" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [*] Đang tự động kiểm tra và cài đặt thư viện cần thiết...
     python -m pip install --upgrade pip >nul 2>&1
     if exist "requirements.txt" (
         pip install -r requirements.txt
     ) else (
-        pip install fastapi uvicorn[standard] sqlalchemy pydantic websockets
+        pip install fastapi uvicorn[standard] sqlalchemy pydantic websockets tzdata
     )
     if !errorlevel! neq 0 (
         echo [LỖI] Cài đặt thư viện thất bại! Vui lòng kiểm tra kết nối mạng.

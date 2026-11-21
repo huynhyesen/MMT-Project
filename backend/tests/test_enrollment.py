@@ -159,3 +159,75 @@ def test_approved_web_usage_and_adult_blocking(parent_credentials):
             "host": "porn.example", "duration_seconds": 10,
         }).status_code == 403
         assert parent.delete(f"/children/{child['id']}").status_code == 200
+
+
+def test_curfew_uses_saved_timezone_for_web_access(parent_credentials, monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.services import curfew
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'curfew.db'}")
+    models.Base.metadata.create_all(engine)
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
+    instant = datetime(2026, 11, 20, 16, 45, tzinfo=timezone.utc)
+
+    def clock(timezone_name):
+        return instant.astimezone(ZoneInfo(timezone_name or "Asia/Tokyo"))
+
+    monkeypatch.setattr(curfew, "curfew_clock", clock)
+    try:
+        with database.SessionLocal() as db:
+            db.add_all([
+                models.TimeLimit(category="LEARNING", bedtime="21:30", wakeup_time="07:00"),
+                models.TimeLimit(category="OVERALL", bedtime="00:55", wakeup_time="06:00"),
+            ])
+            db.commit()
+        with (
+            TestClient(main.app, headers=basic(parent_credentials)) as parent,
+            TestClient(main.app) as agent,
+        ):
+            enroll(parent, agent, "Curfew test", "mmt-test-curfew")
+            rule = parent.post("/rules/", json={
+                "rule_type": "WEBSITE", "target_value": "lesson.example", "action": "ALLOW",
+            })
+            assert rule.status_code == 201
+            website = {"target": "https://lesson.example", "rule_type": "WEBSITE"}
+            legacy = agent.post("/check-permission/", json=website).json()
+            assert legacy["is_curfew"] is True
+            assert "01:45" in legacy["reason"]
+
+            result = parent.post("/curfew/", json={
+                "bedtime": "00:55", "wakeup_time": "06:00", "timezone": "Asia/Ho_Chi_Minh",
+            })
+            assert result.status_code == 200, result.text
+            assert result.json() == {
+                "bedtime": "00:55",
+                "wakeup_time": "06:00",
+                "timezone": "Asia/Ho_Chi_Minh",
+                "current_time": "23:45",
+                "is_within_curfew": False,
+            }
+            assert agent.post("/check-permission/", json=website).json()["allowed"] is True
+            assert agent.get("/usage-stats/").json()["is_bedtime"] is False
+            assert agent.get("/devices/mmt-test-curfew/config").json()["bedtime"] == "00:55"
+            assert parent.get("/onboarding/config").json()["bedtime"] == "00:55"
+
+            instant = datetime(2026, 11, 20, 17, 54, tzinfo=timezone.utc)
+            assert agent.post("/check-permission/", json=website).json()["allowed"] is True
+            instant = datetime(2026, 11, 20, 17, 55, tzinfo=timezone.utc)
+            blocked = agent.post("/check-permission/", json=website).json()
+            assert blocked["is_curfew"] is True
+            assert "00:55" in blocked["reason"]
+            assert agent.get("/usage-stats/").json()["is_bedtime"] is True
+            instant = datetime(2026, 11, 20, 23, 0, tzinfo=timezone.utc)
+            assert agent.post("/check-permission/", json=website).json()["allowed"] is True
+
+            assert parent.post("/curfew/", json={"bedtime": "24:55"}).status_code == 422
+            assert parent.post("/curfew/", json={"timezone": "Invalid/Zone"}).status_code == 422
+            assert parent.get("/curfew/").json()["timezone"] == "Asia/Ho_Chi_Minh"
+    finally:
+        engine.dispose()
