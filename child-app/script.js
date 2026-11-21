@@ -271,6 +271,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     if (alert5) alert5.classList.add("hidden");
                     if (alertExp) alertExp.classList.add("hidden");
                 }
+                connectWebTracking();
                 fetchChildRequests();
                 fetchAllowedRules();
                 fetchUsageStats();
@@ -434,7 +435,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     fetchChildRequests();
                     switchChildTab('history');
                 } else {
-                    alert("Không thể gửi yêu cầu, vui lòng thử lại!");
+                    const data = await res.json();
+                    alert(typeof data.detail === "string" ? data.detail : "Không thể gửi yêu cầu.");
                 }
             } catch (err) {
                 alert("Lỗi kết nối tới máy chủ Backend!");
@@ -442,7 +444,6 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         }
 
         // --- TẢI DANH SÁCH QUY TẮC ĐƯỢC PHÉP (ALLOWED RULES) ---
-        let allowedRulesCache = [];
 
         async function fetchAllowedRules() {
             try {
@@ -452,7 +453,6 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 const container = document.getElementById("allowed-list");
 
                 const allowed = rules.filter(r => r.action === "ALLOW");
-                allowedRulesCache = allowed;
 
                 if (allowed.length === 0) {
                     container.innerHTML = `<div class="p-8 text-center text-slate-400 text-xs col-span-2">Chưa có trang web hoặc ứng dụng nào được mở khóa. Hãy gửi yêu cầu xin phép ở mục Xin Phép!</div>`;
@@ -460,7 +460,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 }
 
                 container.innerHTML = allowed.map(r => {
-                    const isWeb = r.rule_type === "WEBSITE" || r.target_value.includes(".");
+                    const isWeb = r.rule_type === "WEBSITE";
                     const icon = isWeb ? "🌐" : "💻";
                     const remBadgeClass = r.is_expired ? "bg-rose-100 text-rose-800" : (r.remaining_minutes <= 15 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800");
 
@@ -478,19 +478,19 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                                         </span>
                                     </div>
                                     <div class="text-[11px] text-slate-400 mt-0.5">
-                                        Đã dùng: ${r.used_minutes}p / Giới hạn: ${r.time_limit_minutes > 0 ? r.time_limit_minutes + 'p' : 'Không GH'}
+                                        Đã dùng: ${Math.floor(r.used_seconds / 60)}p ${r.used_seconds % 60}s / Giới hạn: ${r.time_limit_minutes > 0 ? r.time_limit_minutes + 'p' : 'Không GH'}
                                     </div>
                                 </div>
                             </div>
 
                             <div>
                                 ${isWeb ? `
-                                    <button data-target="${escapeHtml(r.target_value)}" onclick="handleOpenAllowedTarget(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                    <button data-target="${escapeHtml(r.target_value)}" onclick="openApprovedWebsite(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
                                         <span>Mở trang web</span> ↗
                                     </button>
                                 ` : `
-                                    <button data-target="${escapeHtml(r.target_value)}" onclick="handleOpenAllowedTarget(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
-                                        <span>Mở ứng dụng</span> 🚀
+                                    <button data-target="${escapeHtml(r.target_value)}" onclick="startApprovedAppSession(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                        Bắt đầu phiên ứng dụng
                                     </button>
                                 `}
                             </div>
@@ -503,7 +503,48 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             }
         }
 
-        // --- THEO DÕI VÀ ĐẾM GIỜ SỬ DỤNG WEB/APP (AI GÁN NHÃN) ---
+        async function connectWebTracking() {
+            const status = document.getElementById("web-tracking-status");
+            try {
+                const response = await fetch(`${API_BASE}/web-tracking/session`);
+                if (!response.ok) return;
+                window.dispatchEvent(new CustomEvent("mmt-web-connect", { detail: await response.json() }));
+                setTimeout(() => {
+                    status.textContent = document.documentElement.dataset.mmtWebTracking === "connected"
+                        ? "Tiện ích MMT đang đo thời gian của tab web được phép."
+                        : "Cài tiện ích MMT cho Chrome hoặc Edge để đếm thời gian và chặn trang 18+ trong trình duyệt.";
+                    status.classList.remove("hidden");
+                }, 800);
+            } catch {
+                status.textContent = "Chưa kết nối được bộ theo dõi web.";
+                status.classList.remove("hidden");
+            }
+        }
+
+        async function openApprovedWebsite(target) {
+            // Open from the click before the permission request so popup blockers allow it.
+            const tab = window.open("about:blank", "_blank");
+            if (!tab) {
+                showToast("Trình duyệt đã chặn tab mới. Hãy cho phép mở tab cho dashboard.", "rose");
+                return;
+            }
+            tab.opener = null;
+            try {
+                const response = await fetch(`${API_BASE}/check-permission/`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ target, rule_type: "WEBSITE" })
+                });
+                if (!response.ok) throw new Error("Không thể kiểm tra quyền truy cập.");
+                const result = await response.json();
+                if (!result.allowed) throw new Error(result.reason);
+                tab.location.replace(`https://${result.target}`);
+            } catch (error) {
+                tab.close();
+                showToast(error.message, "rose");
+            }
+        }
+
         let activeUsageSession = null;
         let activeSessionTimer = null;
         let activeSessionSeconds = 0;
@@ -573,32 +614,20 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             fetchAllowedRules();
         }
 
-        async function handleOpenAllowedTarget(targetValue) {
+        async function startApprovedAppSession(target) {
             try {
-                const res = await fetch(`${API_BASE}/check-permission/`, {
+                const response = await fetch(`${API_BASE}/check-permission/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target: targetValue })
+                    body: JSON.stringify({ target, rule_type: "APP" })
                 });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (!data.allowed) {
-                        alert(`Không thể mở "${targetValue}": ${data.reason}`);
-                        return;
-                    }
-                    const aiInfo = data.classification || {};
-                    const isWeb = targetValue.includes(".") || targetValue.startsWith("http");
-                    if (isWeb) {
-                        const webUrl = new URL(/^https?:\/\//i.test(targetValue) ? targetValue : `https://${targetValue}`);
-                        window.open(webUrl.href, "_blank", "noopener,noreferrer");
-                    }
-                    showToast(`✅ Đang mở: ${targetValue} • AI gán nhãn: ${aiInfo.icon || '🏷️'} ${aiInfo.category || ''}`, "emerald");
-                    startActiveUsageTracking(targetValue, aiInfo);
-                    return;
-                }
-            } catch (e) {}
-
-            showToast("Không thể kiểm tra quyền truy cập. Hãy thử lại khi có kết nối.", "rose");
+                if (!response.ok) throw new Error("Không thể kiểm tra quyền truy cập.");
+                const result = await response.json();
+                if (!result.allowed) throw new Error(result.reason);
+                startActiveUsageTracking(target, result.classification);
+            } catch (error) {
+                showToast(error.message, "rose");
+            }
         }
 
         // --- QUẢN LÝ HỒ SƠ CON CÁI & ĐĂNG NHẬP MÁY ---
@@ -671,6 +700,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     lastServerDailyLimit = null;
                     await fetchActiveChild();
                     initWebSocket();
+                    connectWebTracking();
                     fetchAllowedRules();
                     fetchChildRequests();
                     fetchUsageStats();
@@ -1018,12 +1048,14 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             await fetchActiveChild();
             initWebSocket();
             if (!currentChild) openChildLoginModal();
+            else connectWebTracking();
             fetchAllowedRules();
             fetchUsageStats();
             fetchChildRequests();
 
             // Định kỳ cập nhật dữ liệu ngầm mỗi 10 giây
             setInterval(() => {
+                if (currentChild) connectWebTracking();
                 fetchAllowedRules();
                 fetchUsageStats();
             }, 10000);

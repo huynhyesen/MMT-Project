@@ -7,6 +7,16 @@ class TelemetryCreate(BaseModel):
     domain: Optional[str] = None
     duration_seconds: int = Field(ge=0)
 
+class WebUsageCreate(BaseModel):
+    host: str = Field(max_length=253)
+    duration_seconds: int = Field(ge=1, le=120)
+
+
+class CheckPermissionRequest(BaseModel):
+    target: str
+    rule_type: Optional[Literal["APP", "WEBSITE"]] = None
+
+
 class ChildRequestCreate(BaseModel):
     request_type: str # 'PERMISSION_WEB', 'PERMISSION_APP', 'TIME_EXTENSION'
     target_detail: Optional[str] = None
@@ -86,6 +96,7 @@ class AppWebRuleResponse(BaseModel):
     action: str
     time_limit_minutes: int
     used_minutes: int
+    used_seconds: int = 0
     remaining_minutes: int
     remaining_formatted: str
     is_expired: bool

@@ -1,0 +1,51 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "requestDomains": [
+        "adult",
+        "beeg.com",
+        "eporner.com",
+        "hentaihaven.xxx",
+        "nhentai.net",
+        "porn",
+        "porn.com",
+        "pornhub.com",
+        "porntrex.com",
+        "redtube.com",
+        "sex",
+        "spankbang.com",
+        "tnaflix.com",
+        "tube8.com",
+        "xhamster.com",
+        "xnxx.com",
+        "xvideos.com",
+        "xxx",
+        "youjizz.com",
+        "youporn.com"
+      ],
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*(porn|porno|hentai|xxx|sex|18plus|phim18)([.-][a-z0-9-]+)+\\.?[:/]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  }
+]
