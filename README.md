@@ -256,3 +256,15 @@ flowchart TD
 Khi nâng cấp, sao lưu `backend/app.db` trước khi khởi động. Nếu một hồ sơ cũ có nhiều thiết bị, hệ thống giữ thiết bị đã ghép gần nhất và gỡ liên kết dư. Dùng **Đổi máy** để cấp thông tin xác thực mới cho Agent cũ. Nhật ký có từ trước khi bổ sung liên kết thiết bị vẫn nằm trong báo cáo tổng hợp, vì các bản ghi cũ không chứa mã thiết bị.
 
 Hai dashboard được phục vụ trực tiếp từ backend, cùng với Tailwind CSS và Chart.js. Khi đổi lớp Tailwind, chạy lại công cụ Tailwind CSS 3.4.19 với nội dung từ HTML và JavaScript của hai dashboard, `backend/app/main.py` và `backend/app/services/classification.py`, rồi cập nhật `backend/app/assets/dashboard.css`.
+
+## Đếm thời gian dùng web và chặn tên miền 18+
+
+Cập nhật mã nguồn trên cả máy phụ huynh và máy con rồi khởi động lại Backend và Agent. Trên **máy con**:
+
+1. Mở `chrome://extensions` trong Chrome hoặc `edge://extensions` trong Edge.
+2. Bật **Chế độ dành cho nhà phát triển**, chọn **Tải tiện ích đã giải nén** (*Load unpacked*), rồi chọn thư mục `browser-extension` trong dự án. Khi cập nhật dự án, bấm **Tải lại** trên thẻ tiện ích.
+3. Mở **Góc Của Con** từ Agent và đăng nhập PIN. Chờ thông báo **Tiện ích MMT đang đo thời gian của tab web được phép**. Mở lại dashboard khi khởi động lại trình duyệt để kết nối phiên theo dõi.
+
+Khi phụ huynh duyệt tên miền, trẻ có thể mở từ **Được phép** hoặc nhập địa chỉ trực tiếp. Tiện ích chỉ đếm tên miền đã được duyệt khi tab đang hiển thị trong cửa sổ trình duyệt có tiêu điểm. Nó ngừng đếm khi chuyển tab, rời trình duyệt hoặc máy ở trạng thái rảnh. Số liệu được gửi khi chuyển tab và định kỳ khoảng 30 giây. Backend chỉ nhận tên miền và số giây, không nhận đường dẫn hay nội dung trang.
+
+Tiện ích chặn các tên miền và mẫu tên miền 18+ trong danh sách ngay cả khi nhập địa chỉ trực tiếp. Agent bổ sung chặn danh sách tên miền phổ biến qua file hosts khi có quyền quản trị. Các lớp chặn này dựa trên tên miền và không phân loại nội dung bên trong mọi trang hoặc áp dụng cho mọi trình duyệt.

@@ -29,6 +29,7 @@ from .services.formatters import (
 )
 
 from .services.realtime import manager
+from agent.web_policy import is_adult_host, normalize_host
 
 
 # Tự động tạo bảng database nếu chưa tồn tại
@@ -249,6 +250,16 @@ async def authorize_request(request: Request, call_next):
     method = request.method
     if method == "OPTIONS":
         return await call_next(request)
+    if (method, path) == ("POST", "/web-tracking/usage"):
+        request.state.device = security.resolve_device(request, web_tracking=True)
+        if request.state.device:
+            return await call_next(request)
+        return JSONResponse({"detail": "Phiên theo dõi web đã hết hạn."}, status_code=401)
+    if (method, path) == ("GET", "/web-tracking/session"):
+        request.state.device = security.resolve_device(request, child_only=True)
+        if request.state.device and security.same_origin(request):
+            return await call_next(request)
+        return JSONResponse({"detail": "Cần đăng nhập hồ sơ trẻ."}, status_code=401)
     if method not in {"GET", "HEAD"} and not security.same_origin(request):
         return JSONResponse({"detail": "Nguồn yêu cầu không hợp lệ."}, status_code=403)
     if (method in {"GET", "HEAD"} and (
@@ -557,6 +568,43 @@ def owned_rows(query, model, device):
     return query.filter(model.device_id == device.id) if device else query
 
 
+def effective_web_rules(db, device):
+    rules = {}
+    for rule in device_rules(db, device).filter(models.AppWebRule.rule_type == "WEBSITE"):
+        host = normalize_host(rule.target_value)
+        if host:
+            rules.setdefault(host, rule)
+    return rules
+
+
+@app.get("/web-tracking/session")
+def web_tracking_session(request: Request, db: Session = Depends(database.get_db)):
+    device = client_device(request)
+    targets = [
+        host for host, rule in effective_web_rules(db, device).items()
+        if rule.action == "ALLOW" and not is_adult_host(host)
+    ]
+    return JSONResponse(
+        {"token": security.web_tracking_token(device), "targets": targets},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/web-tracking/usage", status_code=201)
+def record_web_usage(data: schemas.WebUsageCreate, request: Request, db: Session = Depends(database.get_db)):
+    device = client_device(request)
+    host = normalize_host(data.host)
+    rule = effective_web_rules(db, device).get(host)
+    if not host or is_adult_host(host) or not rule or rule.action != "ALLOW":
+        raise HTTPException(403, "Tên miền chưa được phép theo dõi.")
+
+    db.add(models.MinimalTelemetryLog(
+        device_id=device.id, app_name=host, domain=host, duration_seconds=data.duration_seconds
+    ))
+    db.commit()
+    return {"status": "success"}
+
+
 @app.post("/telemetry/", status_code=201)
 def receive_telemetry(data: schemas.TelemetryCreate, request: Request, db: Session = Depends(database.get_db)):
     """Nhận siêu dữ liệu thời lượng hoạt động từ Agent hoặc Web tracker."""
@@ -590,16 +638,21 @@ def receive_telemetry(data: schemas.TelemetryCreate, request: Request, db: Sessi
 # 3.1. KIỂM TRA QUYỀN TRUY CẬP VÀ GÁN NHÃN AI
 # ==========================================
 @app.post("/check-permission/")
-def check_permission(payload: dict, request: Request, db: Session = Depends(database.get_db)):
+def check_permission(payload: schemas.CheckPermissionRequest, request: Request, db: Session = Depends(database.get_db)):
     """Kiểm tra một web/app có được phép hay không, đồng thời gán nhãn AI và trả về hạn mức."""
     device = client_device(request)
-    raw_target = payload.get("target", "")
-    target = extract_target_name(raw_target)
+    raw_target = payload.target
+    host = normalize_host(raw_target)
+    is_web = payload.rule_type == "WEBSITE" or (payload.rule_type is None and host and not host.endswith(".exe"))
+    target = host if is_web else extract_target_name(raw_target)
     if not target:
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp địa chỉ web hoặc tên ứng dụng")
 
     classification = classify_item(target)
-    
+    if is_web and is_adult_host(host):
+        return {"allowed": False, "target": host, "classification": classification,
+                "reason": "Trang web thuộc nhóm nội dung 18+ bị chặn."}
+
     # 1. Kiểm tra giờ giới nghiêm (Bedtime Mode)
     curfew_record = db.query(models.TimeLimit).first()
     b_hour = curfew_record.bedtime if curfew_record and curfew_record.bedtime else "22:00"
@@ -629,9 +682,13 @@ def check_permission(payload: dict, request: Request, db: Session = Depends(data
         }
 
     # 3. Kiểm tra quy tắc cụ thể trong Database
-    matched_rule = device_rules(db, device).filter(
-        models.AppWebRule.target_value.ilike(f"%{target}%") | (models.AppWebRule.target_value == target)
-    ).first()
+    if is_web:
+        matched_rule = effective_web_rules(db, device).get(target)
+    else:
+        matched_rule = device_rules(db, device).filter(
+            models.AppWebRule.rule_type == "APP",
+            func.lower(models.AppWebRule.target_value) == target.lower(),
+        ).first()
 
     if matched_rule:
         if matched_rule.action == "BLOCK":
@@ -642,9 +699,11 @@ def check_permission(payload: dict, request: Request, db: Session = Depends(data
                 "reason": f"'{target}' đã bị Cha Mẹ đưa vào danh sách chặn truy cập."
             }
         
-        limit_m = matched_rule.time_limit_minutes or 60
-        used_m = (telemetry.filter(models.MinimalTelemetryLog.app_name == matched_rule.target_value)
-                  .scalar() or 0) // 60
+        limit_m = matched_rule.time_limit_minutes if matched_rule.time_limit_minutes is not None else 60
+        used_seconds = telemetry.filter(func.lower(models.MinimalTelemetryLog.app_name).in_([
+            target.lower(), f"www.{target.lower()}",
+        ])).scalar() or 0
+        used_m = used_seconds // 60
         if limit_m > 0 and used_m >= limit_m:
             return {
                 "allowed": False,
@@ -661,6 +720,7 @@ def check_permission(payload: dict, request: Request, db: Session = Depends(data
             "classification": classification,
             "time_limit_minutes": limit_m,
             "used_minutes": used_m,
+            "used_seconds": used_seconds,
             "remaining_minutes": max(0, limit_m - used_m)
         }
 
@@ -694,7 +754,10 @@ def api_classify(payload: dict):
 @app.post("/requests/", status_code=201, response_model=schemas.ChildRequestResponse)
 async def create_child_request(req: schemas.ChildRequestCreate, request: Request, db: Session = Depends(database.get_db)):
     """Gửi yêu cầu xin phép mở Web/Phần mềm hoặc xin thêm giờ."""
-    clean_target = extract_target_name(req.target_detail or "")
+    is_web_request = req.request_type in {"PERMISSION_WEB", "PERMISSION_WEBSITE", "UNLOCK_WEB", "UNLOCK_WEBSITE"}
+    clean_target = normalize_host(req.target_detail) if is_web_request else extract_target_name(req.target_detail or "")
+    if is_web_request and (not clean_target or is_adult_host(clean_target)):
+        raise HTTPException(422, "Tên miền không hợp lệ hoặc thuộc nhóm nội dung 18+ bị chặn.")
     tags_info = []
     if req.category:
         tags_info.append(f"Nhãn: {req.category}")
@@ -793,8 +856,12 @@ async def update_child_request(
         elif any(k in req.request_type for k in ["PERMISSION", "UNLOCK"]):
             rule_type = "WEBSITE" if any(w in req.request_type for w in ["WEB", "WEBSITE"]) else "APP"
             
+            if rule_type == "WEBSITE":
+                clean_target = normalize_host(clean_target)
+                if not clean_target or is_adult_host(clean_target):
+                    raise HTTPException(403, "Tên miền không hợp lệ hoặc thuộc nhóm nội dung 18+ bị chặn.")
             existing = db.query(models.AppWebRule).filter(
-                models.AppWebRule.target_value == clean_target,
+                func.lower(models.AppWebRule.target_value) == clean_target.lower(),
                 models.AppWebRule.device_id == req.device_id,
             ).first()
             if existing:
@@ -852,26 +919,32 @@ def get_rules(request: Request, db: Session = Depends(database.get_db)):
     rules = device_rules(db, device).all()
     usage = {}
     if device:
-        usage = dict(db.query(
+        for target, seconds in db.query(
             models.MinimalTelemetryLog.app_name, func.sum(models.MinimalTelemetryLog.duration_seconds)
-        ).filter_by(device_id=device.id).group_by(models.MinimalTelemetryLog.app_name).all())
+        ).filter_by(device_id=device.id).group_by(models.MinimalTelemetryLog.app_name):
+            key = target.lower().removeprefix("www.")
+            usage[key] = usage.get(key, 0) + seconds
     seen = set()
     results = []
     for r in rules:
-        if device and r.target_value in seen:
+        is_web = r.rule_type == "WEBSITE"
+        target = normalize_host(r.target_value) if is_web else r.target_value.lower()
+        if device and (r.rule_type, target) in seen:
             continue
-        seen.add(r.target_value)
+        seen.add((r.rule_type, target))
         limit_m = r.time_limit_minutes if r.time_limit_minutes is not None else 60
-        used_m = usage.get(r.target_value, 0) // 60 if device else (r.used_minutes or 0)
+        used_seconds = usage.get(target, 0) if device else (r.used_minutes or 0) * 60
+        used_m = used_seconds // 60
         rem_m, rem_str, expired = format_remaining(limit_m, used_m)
         results.append(schemas.AppWebRuleResponse(
             id=r.id,
             device_id=r.device_id,
             rule_type=r.rule_type,
-            target_value=r.target_value,
-            action=r.action,
+            target_value=target if is_web and target else r.target_value,
+            action="BLOCK" if is_web and is_adult_host(target) else r.action,
             time_limit_minutes=limit_m,
             used_minutes=used_m,
+            used_seconds=used_seconds,
             remaining_minutes=rem_m,
             remaining_formatted=rem_str,
             is_expired=expired
@@ -881,7 +954,12 @@ def get_rules(request: Request, db: Session = Depends(database.get_db)):
 @app.post("/rules/", status_code=201, response_model=schemas.AppWebRuleResponse)
 def create_rule(rule_data: schemas.AppWebRuleCreate, db: Session = Depends(database.get_db)):
     """Phụ huynh thêm quy tắc và cài đặt giới hạn thời gian."""
-    clean_val = extract_target_name(rule_data.target_value)
+    is_web = rule_data.rule_type == "WEBSITE"
+    clean_val = normalize_host(rule_data.target_value) if is_web else extract_target_name(rule_data.target_value)
+    if not clean_val:
+        raise HTTPException(422, "Tên miền hoặc ứng dụng không hợp lệ.")
+    if is_web and is_adult_host(clean_val) and rule_data.action != "BLOCK":
+        raise HTTPException(403, "Không thể cho phép tên miền thuộc nhóm nội dung 18+.")
     existing = db.query(models.AppWebRule).filter(
         models.AppWebRule.target_value == clean_val
     ).first()
@@ -910,7 +988,7 @@ def create_rule(rule_data: schemas.AppWebRuleCreate, db: Session = Depends(datab
         rule_type=rule_data.rule_type,
         target_value=clean_val,
         action=rule_data.action or "ALLOW",
-        time_limit_minutes=rule_data.time_limit_minutes or 60,
+        time_limit_minutes=rule_data.time_limit_minutes if rule_data.time_limit_minutes is not None else 60,
         used_minutes=0
     )
     db.add(new_rule)
@@ -1080,7 +1158,7 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
     for app_name, total_sec in db_logs:
         if is_system_process(app_name):
             continue
-        clean_n = extract_target_name(app_name) or app_name
+        clean_n = (extract_target_name(app_name) or app_name).lower()
         if clean_n and not is_system_process(clean_n):
             real_usage_sec_map[clean_n] = real_usage_sec_map.get(clean_n, 0) + int(total_sec or 0)
 
@@ -1126,12 +1204,13 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         else:
             utilities_minutes += minutes
 
-        pct = round((minutes / total_minutes) * 100, 1) if total_minutes > 0 else 0
+        seconds = real_usage_sec_map[name]
+        pct = round(seconds / total_actual_sec * 100, 1) if total_actual_sec else 0
 
         items.append(schemas.UsageItemResponse(
             app_name=name,
             duration_minutes=minutes,
-            duration_formatted=format_duration(minutes),
+            duration_formatted=f"{seconds} giây" if seconds < 60 else format_duration(minutes),
             category=cat,
             tag=tag,
             icon=info["icon"],
@@ -1157,7 +1236,7 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
 
     return schemas.UsageStatsResponse(
         total_minutes=total_minutes,
-        total_formatted=format_duration(total_minutes),
+        total_formatted=f"{total_actual_sec} giây" if 0 < total_actual_sec < 60 else format_duration(total_minutes),
         learning_minutes=learning_minutes,
         learning_formatted=format_duration(learning_minutes),
         entertainment_minutes=entertainment_minutes,

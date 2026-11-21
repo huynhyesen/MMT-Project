@@ -98,3 +98,64 @@ def test_admin_requires_configuration_and_same_origin(parent_credentials, monkey
         }).status_code == 403
         monkeypatch.delenv("MMT_PARENT_PASSWORD")
         assert visitor.get("/parent/").status_code == 503
+
+
+def test_approved_web_usage_and_adult_blocking(parent_credentials):
+    with (
+        TestClient(main.app, headers=basic(parent_credentials)) as parent,
+        TestClient(main.app) as agent,
+        TestClient(main.app) as browser,
+        TestClient(main.app) as extension,
+    ):
+        child, credential = enroll(parent, agent, "Web test", "mmt-test-web")
+        device_id, token = credential.split(".")
+        enrollment = {"Authorization": f"Bearer {device_id}.{security.dashboard_key(token)}"}
+        assert browser.get("/web-tracking/session").status_code == 401
+        assert agent.get("/web-tracking/session").status_code == 401
+        assert browser.post("/children/login", headers=enrollment, json={
+            "child_id": child["id"], "pin": "2580",
+        }).status_code == 200
+
+        response = browser.post("/requests/", json={
+            "request_type": "PERMISSION_WEB",
+            "target_detail": "https://WWW.LESSON.EXAMPLE./chapter?topic=math",
+            "reason_from_child": "Học bài",
+            "requested_minutes": 15,
+        })
+        assert response.status_code == 201, response.text
+        assert response.json()["target_detail"].startswith("lesson.example ")
+        request_id = response.json()["id"]
+        assert parent.patch(f"/requests/{request_id}", json={"status": "APPROVED"}).status_code == 200
+
+        session = browser.get("/web-tracking/session").json()
+        assert "lesson.example" in session["targets"]
+        extension.headers["Authorization"] = f"Bearer {session['token']}"
+        assert extension.get("/rules/").status_code == 401
+        assert browser.post("/web-tracking/usage", json={
+            "host": "lesson.example", "duration_seconds": 17,
+        }).status_code == 401
+        assert extension.post("/web-tracking/usage", headers={"Origin": "chrome-extension://test"}, json={
+            "host": "www.lesson.example", "duration_seconds": 17,
+        }).status_code == 201
+        rules = agent.get("/rules/").json()
+        rule = next(rule for rule in rules if rule["target_value"] == "lesson.example")
+        assert rule["used_seconds"] == 17
+        assert agent.get("/usage-stats/").json()["total_seconds"] == 17
+
+        unsafe = "https://www.porn.example/placeholder"
+        with database.SessionLocal() as db:
+            # An allowance carried over from before the website policy must be overridden.
+            db.add(models.AppWebRule(
+                device_id=device_id, rule_type="WEBSITE", target_value="porn.example", action="ALLOW"
+            ))
+            db.commit()
+        response = browser.post("/check-permission/", json={"target": unsafe, "rule_type": "WEBSITE"})
+        assert response.json()["allowed"] is False
+        assert "18+" in response.json()["reason"]
+        assert browser.post("/requests/", json={
+            "request_type": "PERMISSION_WEB", "target_detail": unsafe, "reason_from_child": "Mẫu kiểm thử",
+        }).status_code == 422
+        assert extension.post("/web-tracking/usage", json={
+            "host": "porn.example", "duration_seconds": 10,
+        }).status_code == 403
+        assert parent.delete(f"/children/{child['id']}").status_code == 200

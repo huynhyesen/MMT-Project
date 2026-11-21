@@ -92,11 +92,15 @@ def dashboard_session(device):
     return f"{device.id}.{_session_token(device.pairing_token, 'mmt-child-session')}"
 
 
-def resolve_device(connection: HTTPConnection, *, enrollment=False, agent_only=False, child_only=False):
+def web_tracking_token(device):
+    return f"{device.id}.{_session_token(device.pairing_token, 'mmt-web-tracking')}"
+
+
+def resolve_device(connection: HTTPConnection, *, enrollment=False, agent_only=False, child_only=False, web_tracking=False):
     scheme, _, bearer = connection.headers.get("authorization", "").partition(" ")
     child_id, _, _ = connection.cookies.get(CHILD_COOKIE, "").partition(".")
     device_id, _, key = bearer.partition(".") if scheme.lower() == "bearer" else ("", "", "")
-    if not device_id and not enrollment and not agent_only:
+    if not device_id and not enrollment and not agent_only and not web_tracking:
         device_id = child_id
     if not device_id:
         return None
@@ -104,7 +108,9 @@ def resolve_device(connection: HTTPConnection, *, enrollment=False, agent_only=F
         device = db.get(models.Device, device_id)
         if not device or not device.is_paired or not device.pairing_token or not device.child_profile_id:
             return None
-        if enrollment:
+        if web_tracking:
+            valid = _valid_session(key, device.pairing_token, "mmt-web-tracking")
+        elif enrollment:
             valid = secrets.compare_digest(key.encode(), dashboard_key(device.pairing_token).encode())
         elif key and not child_only:
             valid = secrets.compare_digest(key.encode(), device.pairing_token.encode())

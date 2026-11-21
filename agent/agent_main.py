@@ -10,6 +10,7 @@ import urllib.request
 
 # Nạp các module thành phần cốt lõi của Agent
 from monitor import get_active_app_metadata
+from web_policy import ADULT_HOSTS, is_adult_host, normalize_host
 from blocker import enforce_block_policy, kill_blocked_process, block_websites, unblock_websites, unblock_all_websites, lock_system, extract_domain
 from hwid import get_device_hwid, get_machine_info
 from cloud_sync import load_agent_config, device_headers, pair_with_backend, fetch_parent_config
@@ -119,6 +120,12 @@ def get_ws_url(http_url: str):
 BACKEND_HTTP = resolve_backend_url()
 URI = get_ws_url(BACKEND_HTTP)
 
+BROWSER_PROCESSES = {
+    "chrome", "chromium", "chromium-browser", "msedge", "microsoft-edge", "firefox",
+    "brave", "brave-browser", "opera", "vivaldi", "coccoc", "browser",
+}
+ADULT_BLOCK_DOMAINS = {host for host in ADULT_HOSTS if "." in host}
+
 BLOCKED_KEYWORDS = ["discord", "youtube", "facebook", "tiktok", "roblox"] 
 BLOCKED_DOMAINS = ["youtube.com", "facebook.com", "discord.com", "tiktok.com"]
 
@@ -162,7 +169,7 @@ def sync_allowed_rules():
                     if not val:
                         continue
                     val_lower = val.lower()
-                    if r.get("action") == "ALLOW":
+                    if r.get("action") == "ALLOW" and not is_adult_host(normalize_host(val_lower)):
                         ALLOWED_TARGETS.add(val_lower)
                         # Gỡ khỏi danh sách cấm
                         for kw in list(BLOCKED_KEYWORDS):
@@ -209,6 +216,7 @@ async def monitor_apps_task():
             app_name = app.get("app_name", "")
             app_lower = app_name.lower()
             window_title = app.get("window_title", "")
+            is_browser = app_lower.removesuffix(".exe") in BROWSER_PROCESSES
 
             # 1. AI CONTENT FILTERING: Kiểm tra tiêu đề cửa sổ theo thời gian thực
             if window_title and not any(ign in app_lower for ign in IGNORE_SYSTEM_PROCS):
@@ -223,7 +231,7 @@ async def monitor_apps_task():
             is_allowed = any(allowed in app_lower or (window_title and allowed in window_title.lower()) for allowed in ALLOWED_TARGETS)
             if is_allowed:
                 # Gửi telemetry thời gian học tập / sử dụng
-                if reported_count < 3 and not any(ign in app_lower for ign in IGNORE_SYSTEM_PROCS):
+                if not is_browser and reported_count < 3 and not any(ign in app_lower for ign in IGNORE_SYSTEM_PROCS):
                     send_telemetry(app_name, duration_sec=5)
                     reported_count += 1
                 continue
@@ -263,7 +271,7 @@ async def monitor_apps_task():
                 continue
 
             # Gửi telemetry ứng dụng bình thường
-            if reported_count < 3 and not any(ign in app_lower for ign in IGNORE_SYSTEM_PROCS):
+            if not is_browser and reported_count < 3 and not any(ign in app_lower for ign in IGNORE_SYSTEM_PROCS):
                 send_telemetry(app_name, duration_sec=5)
                 reported_count += 1
                 
@@ -325,18 +333,6 @@ async def listen_to_server():
                                     hide_kiosk_lock()
                                     sync_allowed_rules()
                                 else:
-                                    raw_target = req_info.get("clean_target") or req_info.get("target_detail", "")
-                                    clean_target = extract_domain(raw_target)
-                                    print(f"🔓 [AGENT] Phụ huynh đã duyệt cho phép: {clean_target or raw_target}!")
-                                    if clean_target:
-                                        ALLOWED_TARGETS.add(clean_target.lower())
-                                        unblock_websites([clean_target])
-                                        
-                                        # Gỡ từ khóa cấm nếu có
-                                        for kw in list(BLOCKED_KEYWORDS):
-                                            if kw in clean_target.lower() or clean_target.lower() in kw:
-                                                BLOCKED_KEYWORDS.remove(kw)
-                                                print(f"✅ [AGENT] Đã gỡ từ khóa cấm: {kw}")
                                     sync_allowed_rules()
 
                         elif msg_type in ["RULES_RESET", "FULL_RESET", "RULES_UPDATED", "LIMIT_UPDATED", "ONBOARDING_UPDATED", "DAILY_RESET_TRIGGERED", "DAILY_RESET", "USAGE_RESET"]:
@@ -422,7 +418,7 @@ async def main():
             print(f"📥 [ĐỒNG BỘ]: Hạn mức: {p_cfg.get('daily_limit_minutes')}p | Giới nghiêm: {p_cfg.get('bedtime')}")
 
         sync_allowed_rules()
-        block_websites(BLOCKED_DOMAINS)
+        block_websites(set(BLOCKED_DOMAINS) | ADULT_BLOCK_DOMAINS)
         await asyncio.gather(
             monitor_apps_task(),
             listen_to_server(),
