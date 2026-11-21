@@ -63,7 +63,7 @@ Cài tiện ích trong hồ sơ Chrome hoặc Edge mà trẻ sử dụng trên m
 2. Bật **Chế độ dành cho nhà phát triển**, chọn **Tải tiện ích đã giải nén** (*Load unpacked*) và chọn thư mục `browser-extension` trong dự án.
 3. Mở lại **Góc Của Con** từ Agent và đăng nhập PIN. Chờ dòng **Tiện ích MMT đang đo thời gian của tab web được phép**. Sau khi khởi động lại trình duyệt, mở lại dashboard để kết nối phiên theo dõi.
 
-Trẻ có thể xin mở web trong **Xin phép**. Sau khi phụ huynh duyệt, trẻ mở trang từ **Được phép** hoặc nhập địa chỉ trực tiếp. Tiện ích tính số giây cho tên miền đã được duyệt khi tab được chọn, cửa sổ trình duyệt có tiêu điểm và máy chưa chuyển sang trạng thái rảnh. Số liệu được gửi khi chuyển tab và định kỳ khoảng 30 giây. Trang **Thống kê** trên dashboard phụ huynh tự làm mới khi đang hiển thị. Dữ liệu đếm giờ web gửi về Backend gồm tên miền và số giây.
+Trẻ có thể xin mở web trong **Xin phép**. Sau khi phụ huynh duyệt, trẻ mở trang từ **Được phép** hoặc nhập địa chỉ trực tiếp. Tiện ích tính số giây cho tên miền đã được duyệt khi tab được chọn, cửa sổ trình duyệt có tiêu điểm và có hoạt động. Video có tiếng trong tab đang hiển thị vẫn được tính khi trẻ xem mà không chạm chuột hay bàn phím. Số liệu được gửi khi chuyển tab và định kỳ khoảng 30 giây. Trang **Thống kê** trên dashboard phụ huynh tự làm mới khi đang hiển thị. Dữ liệu đếm giờ web gửi về Backend gồm tên miền và số giây.
 
 Nếu một trang đã duyệt chưa hiện trong thống kê, kiểm tra tiện ích đã báo kết nối, tab web nằm trong cùng hồ sơ Chrome/Edge và báo cáo đang chọn đúng trẻ. Nếu trang chuyển sang tên miền khác với tên miền đã duyệt, kiểm tra địa chỉ cuối cùng trên thanh địa chỉ.
 

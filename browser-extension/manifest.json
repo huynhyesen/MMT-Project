@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MMT – Theo dõi và lọc web",
   "description": "Đếm thời gian của các trang web được phụ huynh cho phép và chặn tên miền 18+.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "permissions": ["alarms", "declarativeNetRequest", "idle", "storage", "tabs"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "background": {"service_worker": "worker.js"},

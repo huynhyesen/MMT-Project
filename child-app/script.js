@@ -720,20 +720,20 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         // --- BIỂU ĐỒ THÂN THIỆN CHO TRẺ ---
         let childChart = null;
 
-        function updateChildChart(learnM, entM, socM) {
+        function updateChildChart(learning, entertainment, social) {
             const ctx = document.getElementById("childUsageChart");
             if (!ctx) return;
-            const total = (learnM || 0) + (entM || 0) + (socM || 0);
+            const total = (learning || 0) + (entertainment || 0) + (social || 0);
             const legendEl = document.getElementById("child-chart-legend");
             if (legendEl) {
                 if (total === 0) {
                     legendEl.textContent = "Chưa có hoạt động hôm nay";
                 } else {
-                    legendEl.innerHTML = `📚 <b>${learnM}p</b> • 🎮 <b>${entM}p</b> • 💬 <b>${socM}p</b>`;
+                    legendEl.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b>`;
                 }
             }
 
-            const dataValues = total === 0 ? [1] : [learnM || 0, entM || 0, socM || 0];
+            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0];
             const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6'];
             const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội'];
 
@@ -764,8 +764,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        if (total === 0) return "Chưa dùng";
-                                        return ` ${context.label}: ${context.raw} phút`;
+                                        if (context.label === "Chưa dùng") return "Chưa dùng";
+                                        return ` ${context.label}: ${formatUsageSeconds(context.raw)}`;
                                     }
                                 }
                             }
@@ -873,10 +873,14 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 document.getElementById("quick-ent-time").textContent = entStr;
                 document.getElementById("quick-soc-time").textContent = socStr;
 
-                updateChildChart(data.learning_minutes, data.entertainment_minutes, data.social_minutes);
+                updateChildChart(
+                    data.learning_seconds ?? (data.learning_minutes || 0) * 60,
+                    data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
+                    data.social_seconds ?? (data.social_minutes || 0) * 60
+                );
 
                 const totalMins = data.total_minutes || 0;
-                document.getElementById("summary-used-time").textContent = `${totalMins} phút`;
+                document.getElementById("summary-used-time").textContent = data.total_formatted || "0 phút";
 
                 // Hạn mức và thời gian còn lại của con
                 const dailyLimit = data.daily_limit_minutes || 120;

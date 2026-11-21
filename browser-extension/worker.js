@@ -19,10 +19,13 @@ function hostname(url) {
 }
 
 async function activeHost() {
-    if (await chrome.idle.queryState(60) !== "active") return "";
+    const activity = await chrome.idle.queryState(60);
+    if (activity === "locked") return "";
     const window = await chrome.windows.getLastFocused();
     if (!window.focused) return "";
     const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
+    // A foreground tab can be in use while a video plays without mouse or keyboard input.
+    if (activity === "idle" && (!tab?.audible || tab.mutedInfo?.muted)) return "";
     return hostname(tab?.url);
 }
 
@@ -131,7 +134,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 
 chrome.tabs.onActivated.addListener(() => schedule(() => track(true)));
 chrome.tabs.onUpdated.addListener((_tab, changes) => {
-    if (changes.url) schedule(() => track(true));
+    if (changes.url || changes.audible !== undefined) schedule(() => track(true));
 });
 chrome.tabs.onRemoved.addListener(() => schedule(() => track(true)));
 chrome.windows.onFocusChanged.addListener(() => schedule(() => track(true)));

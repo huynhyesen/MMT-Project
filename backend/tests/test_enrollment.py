@@ -235,3 +235,90 @@ def test_curfew_uses_saved_timezone_for_web_access(parent_credentials, monkeypat
             assert parent.get("/curfew/").json()["timezone"] == "Asia/Ho_Chi_Minh"
     finally:
         engine.dispose()
+
+
+def test_youtube_approval_counts_as_entertainment(parent_credentials, monkeypatch, tmp_path):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from agent import blocker
+    from agent.web_policy import blocked_hosts_for_agent
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'youtube.db'}")
+    models.Base.metadata.create_all(engine)
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
+    hosts_file = tmp_path / "hosts"
+    manual_entry = "192.0.2.1 www.youtube.com # local override\n"
+    hosts_file.write_text(manual_entry)
+    monkeypatch.setattr(blocker, "HOSTS_PATH", str(hosts_file))
+    monkeypatch.setattr(blocker, "MANAGED_DOMAINS", set())
+    try:
+        with (
+            TestClient(main.app, headers=basic(parent_credentials)) as parent,
+            TestClient(main.app) as agent,
+            TestClient(main.app) as child_browser,
+            TestClient(main.app) as extension,
+        ):
+            assert parent.post("/curfew/", json={"bedtime": "00:00", "wakeup_time": "00:00"}).status_code == 200
+            profile, credential = enroll(parent, agent, "YouTube test", "mmt-youtube")
+            device_id, token = credential.split(".")
+            enrollment = {"Authorization": f"Bearer {device_id}.{security.dashboard_key(token)}"}
+            login = child_browser.post("/children/login", headers=enrollment, json={
+                "child_id": profile["id"], "pin": "2580",
+            })
+            assert login.status_code == 200
+
+            before = blocked_hosts_for_agent(agent.get("/rules/").json())
+            assert "youtube.com" in before
+            blocker.block_websites(before)
+            assert "127.0.0.1 youtube.com # MMT_BLOCK" in hosts_file.read_text()
+
+            pending = child_browser.post("/requests/", json={
+                "request_type": "PERMISSION_WEB", "target_detail": "https://www.youtube.com/",
+                "reason_from_child": "Giải trí", "requested_minutes": 30,
+            })
+            assert pending.status_code == 201
+            request_id = pending.json()["id"]
+            assert parent.patch(f"/requests/{request_id}", json={"status": "APPROVED"}).status_code == 200
+
+            after = blocked_hosts_for_agent(agent.get("/rules/").json())
+            assert "youtube.com" not in after
+            assert before - after == {"youtube.com"}
+            blocker.unblock_websites(before - after)
+            blocker.block_websites(after)
+            assert "127.0.0.1 youtube.com # MMT_BLOCK" not in hosts_file.read_text()
+            assert manual_entry in hosts_file.read_text()
+
+            target = {"target": "https://www.youtube.com/", "rule_type": "WEBSITE"}
+            permission = child_browser.post("/check-permission/", json=target).json()
+            assert permission["allowed"] is True
+            assert permission["time_limit_minutes"] == 30
+
+            session = child_browser.get("/web-tracking/session").json()
+            assert "youtube.com" in session["targets"]
+            extension.headers["Authorization"] = f"Bearer {session['token']}"
+            assert extension.post("/web-tracking/usage", json={
+                "host": "www.youtube.com", "duration_seconds": 17,
+            }).status_code == 201
+
+            stats = parent.get(f"/usage-stats/?child_id={profile['id']}").json()
+            [item] = stats["items"]
+            assert item["app_name"] == "youtube.com"
+            assert item["tag"] == "ENTERTAINMENT"
+            assert item["duration_formatted"] == "17 giây"
+            assert item["time_limit_minutes"] == 30
+            assert stats["entertainment_seconds"] == 17
+            assert stats["entertainment_formatted"] == "17 giây"
+
+            with database.SessionLocal() as db:
+                db.add(models.MinimalTelemetryLog(
+                    device_id=device_id, app_name="youtube.com", domain="youtube.com", duration_seconds=1782,
+                ))
+                db.commit()
+            assert child_browser.post("/check-permission/", json=target).json()["allowed"] is True
+            assert extension.post("/web-tracking/usage", json={
+                "host": "youtube.com", "duration_seconds": 1,
+            }).status_code == 201
+            assert child_browser.post("/check-permission/", json=target).json()["is_expired"] is True
+    finally:
+        engine.dispose()

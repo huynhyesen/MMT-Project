@@ -23,8 +23,8 @@ from .services.classification import (
 )
 
 from .services.formatters import (
-    format_duration,
     format_remaining,
+    format_usage_duration,
 )
 
 from .services.curfew import current_curfew, store_curfew
@@ -1175,23 +1175,16 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
     total_actual_sec = sum(real_usage_sec_map.values()) or 0
     total_minutes = total_actual_sec // 60
 
-    real_usage_map = {}
-    for clean_n, sec in real_usage_sec_map.items():
-        mins = sec // 60 if sec >= 60 else (1 if sec > 0 else 0)
-        real_usage_map[clean_n] = mins
-
     rules = device_rules(db, device).all()
     rule_limits = {}
     for r in rules:
         rule_limits.setdefault(r.target_value.lower(), r.time_limit_minutes)
 
     items: List[schemas.UsageItemResponse] = []
-    learning_minutes = 0
-    entertainment_minutes = 0
-    social_minutes = 0
-    utilities_minutes = 0
+    category_seconds = {"LEARNING": 0, "ENTERTAINMENT": 0, "SOCIAL": 0, "UTILITY": 0}
 
-    for name, minutes in sorted(real_usage_map.items(), key=lambda x: x[1], reverse=True):
+    for name, seconds in sorted(real_usage_sec_map.items(), key=lambda item: item[1], reverse=True):
+        minutes = seconds // 60
         info = classify_item(name)
         cat = info["category"]
         tag = info["tag"]
@@ -1205,22 +1198,14 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
 
         rem_m, rem_str, is_exp = format_remaining(limit_m, minutes)
 
-        if tag == "LEARNING":
-            learning_minutes += minutes
-        elif tag == "ENTERTAINMENT":
-            entertainment_minutes += minutes
-        elif tag == "SOCIAL":
-            social_minutes += minutes
-        else:
-            utilities_minutes += minutes
-
-        seconds = real_usage_sec_map[name]
+        category = tag if tag in category_seconds else "UTILITY"
+        category_seconds[category] += seconds
         pct = round(seconds / total_actual_sec * 100, 1) if total_actual_sec else 0
 
         items.append(schemas.UsageItemResponse(
             app_name=name,
             duration_minutes=minutes,
-            duration_formatted=f"{seconds} giây" if seconds < 60 else format_duration(minutes),
+            duration_formatted=format_usage_duration(seconds),
             category=cat,
             tag=tag,
             icon=info["icon"],
@@ -1246,15 +1231,19 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
 
     return schemas.UsageStatsResponse(
         total_minutes=total_minutes,
-        total_formatted=f"{total_actual_sec} giây" if 0 < total_actual_sec < 60 else format_duration(total_minutes),
-        learning_minutes=learning_minutes,
-        learning_formatted=format_duration(learning_minutes),
-        entertainment_minutes=entertainment_minutes,
-        entertainment_formatted=format_duration(entertainment_minutes),
-        social_minutes=social_minutes,
-        social_formatted=format_duration(social_minutes),
-        utilities_minutes=utilities_minutes,
-        utilities_formatted=format_duration(utilities_minutes),
+        total_formatted=format_usage_duration(total_actual_sec),
+        learning_minutes=category_seconds["LEARNING"] // 60,
+        learning_seconds=category_seconds["LEARNING"],
+        learning_formatted=format_usage_duration(category_seconds["LEARNING"]),
+        entertainment_minutes=category_seconds["ENTERTAINMENT"] // 60,
+        entertainment_seconds=category_seconds["ENTERTAINMENT"],
+        entertainment_formatted=format_usage_duration(category_seconds["ENTERTAINMENT"]),
+        social_minutes=category_seconds["SOCIAL"] // 60,
+        social_seconds=category_seconds["SOCIAL"],
+        social_formatted=format_usage_duration(category_seconds["SOCIAL"]),
+        utilities_minutes=category_seconds["UTILITY"] // 60,
+        utilities_seconds=category_seconds["UTILITY"],
+        utilities_formatted=format_usage_duration(category_seconds["UTILITY"]),
         is_bedtime=curfew.is_within_curfew,
         bedtime_hour=curfew.bedtime,
         wakeup_hour=curfew.wakeup_time,

@@ -40,3 +40,23 @@ def is_adult_host(host):
     return any(".".join(labels[index:]) in ADULT_HOSTS for index in range(len(labels))) or any(
         pattern.match(f"https://{host}/") for pattern in ADULT_FILTERS
     )
+
+
+DEFAULT_BLOCKED_HOSTS = frozenset({"youtube.com", "facebook.com", "discord.com", "tiktok.com"})
+ADULT_BLOCK_DOMAINS = frozenset(host for host in ADULT_HOSTS if "." in host)
+
+
+def blocked_hosts_for_agent(rules):
+    """Apply the device's effective website rules to the Agent's default block list."""
+    blocked = set(DEFAULT_BLOCKED_HOSTS)
+    for rule in rules:
+        if rule["rule_type"] != "WEBSITE":
+            continue
+        host = normalize_host(rule["target_value"])
+        if not host:
+            continue
+        if rule["action"] == "BLOCK" or is_adult_host(host):
+            blocked.add(host)
+        elif rule["action"] == "ALLOW":
+            blocked.discard(host)
+    return blocked | ADULT_BLOCK_DOMAINS

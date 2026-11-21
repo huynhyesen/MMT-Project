@@ -23,6 +23,7 @@ test("a newly approved site is counted on another tab after the dashboard closes
     const reports = [];
     const event = name => ({ addListener(handler) { handlers[name] = handler; } });
     let policy = [];
+    let activity = "active";
     let storedTracking;
     let now = 100000;
     let activeTab = { url: dashboard };
@@ -39,7 +40,7 @@ test("a newly approved site is counted on another tab after the dashboard closes
             getLastFocused: async () => ({ id: 1, focused: true }),
             onFocusChanged: event("focus")
         },
-        idle: { queryState: async () => "active", setDetectionInterval() {}, onStateChanged: event("idle") },
+        idle: { queryState: async () => activity, setDetectionInterval() {}, onStateChanged: event("idle") },
         alarms: {
             get: async () => alarmName,
             create: async name => { alarmName = name; },
@@ -87,4 +88,23 @@ test("a newly approved site is counted on another tab after the dashboard closes
     handlers.alarm({ name: alarmName });
     await settle();
     assert.equal(reports.length, 1);
+
+    policy.push("youtube.com");
+    activeTab = { url: "https://www.youtube.com/watch?v=fixture", audible: true };
+    activity = "idle";
+    handlers.updated(4, { url: activeTab.url });
+    await settle();
+
+    now += 12000;
+    handlers.alarm({ name: alarmName });
+    await settle();
+    assert.deepEqual(reports[1], { host: "youtube.com", duration_seconds: 12 });
+
+    activity = "locked";
+    handlers.idle(activity);
+    await settle();
+    now += 15000;
+    handlers.alarm({ name: alarmName });
+    await settle();
+    assert.equal(reports.length, 2);
 });

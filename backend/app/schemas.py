@@ -63,12 +63,16 @@ class UsageStatsResponse(BaseModel): #default
     total_minutes: int
     total_formatted: str
     learning_minutes: int
+    learning_seconds: int = 0
     learning_formatted: str
     entertainment_minutes: int
+    entertainment_seconds: int = 0
     entertainment_formatted: str
     social_minutes: int
+    social_seconds: int = 0
     social_formatted: str
     utilities_minutes: int
+    utilities_seconds: int = 0
     utilities_formatted: str
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
