@@ -185,6 +185,14 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                             showDesktopNotification("📩 Yêu cầu mới từ con!", `Bé vừa xin: "${data.data?.target_detail || ''}"\nLý do: ${data.data?.reason_from_child || ''}`);
                             showToast(`🔔 Bé vừa xin phép: "${data.data.target_detail}" - Lý do: ${data.data.reason_from_child}`, "info");
                             fetchRequests();
+                        } else if (data.type === "ADULT_WEBSITE_BLOCKED") {
+                            if (data.first_attempt) {
+                                const text = `${data.child_name || "Máy con"} · Đã chặn ${data.domain}`;
+                                playNotificationSound("alert");
+                                showDesktopNotification("Cảnh báo 18+", text);
+                                showToast(text, "danger");
+                            }
+                            fetchAlerts();
                         } else if (data.type === "UNAPPROVED_ATTEMPT") {
                             playNotificationSound('alert');
                             showDesktopNotification("🚨 Cảnh báo từ máy con!", `Con vừa cố mở: "${data.app_name}"`);
@@ -408,22 +416,22 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         let parentChart = null;
 
-        function updateParentChart(learning, entertainment, social) {
+        function updateParentChart(learning, entertainment, social, unclassified) {
             const ctx = document.getElementById("parentUsageChart");
             if (!ctx) return;
-            const total = (learning || 0) + (entertainment || 0) + (social || 0);
+            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0);
             const legendText = document.getElementById("chart-legend-text");
             if (legendText) {
                 if (total === 0) {
                     legendText.innerText = "Chưa có hoạt động hôm nay";
                 } else {
-                    legendText.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b>`;
+                    legendText.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>`;
                 }
             }
 
-            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0];
-            const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6'];
-            const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội'];
+            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0, unclassified || 0];
+            const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6', '#64748b'];
+            const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội', 'Chưa phân loại'];
 
             if (parentChart) {
                 parentChart.data.datasets[0].data = dataValues;
@@ -489,7 +497,8 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                 updateParentChart(
                     data.learning_seconds ?? (data.learning_minutes || 0) * 60,
                     data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
-                    data.social_seconds ?? (data.social_minutes || 0) * 60
+                    data.social_seconds ?? (data.social_minutes || 0) * 60,
+                    data.unclassified_seconds ?? 0
                 );
 
                 cachedUsageItems = data.items || [];
@@ -905,10 +914,13 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                 }
 
                 container.innerHTML = alerts.map(a => {
-                    const timeStr = new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    const timeStr = new Date(a.timestamp.endsWith("Z") || /[+-][0-9]{2}:[0-9]{2}$/.test(a.timestamp)
+                        ? a.timestamp : a.timestamp + "Z").toLocaleString("vi-VN");
                     
                     let catBadge = `<span class="text-[9px] bg-blue-100 text-blue-800 border border-blue-200 font-bold px-1.5 py-0.5 rounded">⚠️ Web Lạ Chưa Phép</span>`;
-                    if (a.category === "AI_CONTENT_TEXT") {
+                    if (a.category === "ADULT_WEBSITE") {
+                        catBadge = '<span class="text-[10px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded">18+</span>';
+                    } else if (a.category === "AI_CONTENT_TEXT") {
                         catBadge = `<span class="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">🤖 Lọc AI Văn Bản</span>`;
                     } else if (a.category === "AI_CONTENT_IMAGE") {
                         catBadge = `<span class="text-[9px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">🖼️ Lọc AI Màn Hình</span>`;
@@ -928,16 +940,17 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                                         ${catBadge}
                                         <span class="text-[10px] bg-rose-200 text-rose-800 px-1.5 py-0.5 rounded font-mono">${timeStr}</span>
                                     </div>
-                                    <p class="text-[11px] text-rose-700 mt-0.5">${escapeHtml(a.reason || "Cố tình truy cập trang web lạ chưa xin phép")}</p>
+                                    <p class="text-[11px] text-rose-700 mt-0.5">${escapeHtml(a.reason)}${a.child_name ? " · " + escapeHtml(a.child_name) : ""}${a.attempt_count > 1 ? " · " + a.attempt_count + " lần" : ""}</p>
                                 </div>
                             </div>
                             <div class="flex items-center gap-1.5 self-end sm:self-auto">
-                                <button data-argument="${escapeHtml(a.target_value)}" onclick="quickAllowAlert(this.dataset.argument)" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition">
+                                ${a.category !== "ADULT_WEBSITE" ? `<button data-argument="${escapeHtml(a.target_value)}" onclick="quickAllowAlert(this.dataset.argument)" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition">
                                     ✅ Cho phép
                                 </button>
                                 <button data-argument="${escapeHtml(a.target_value)}" onclick="quickBlockAlert(this.dataset.argument)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-xs transition">
                                     ⛔ Chặn
                                 </button>
+                                ` : ""}
                                 <button onclick="deleteAlert(${a.id})" class="p-1 text-slate-400 hover:text-rose-600 transition" title="Xóa cảnh báo">
                                     &times;
                                 </button>
@@ -1029,8 +1042,9 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                 rules.forEach(r => {
                     const card = document.createElement("div");
                     const isAllow = r.action === "ALLOW";
-                    const badgeBg = isAllow ? "bg-emerald-100 text-emerald-800 border-emerald-300" : "bg-rose-100 text-rose-800 border-rose-300";
-                    const badgeText = isAllow ? "Cho phép ✅" : "Chặn 🛑";
+                    const badgeBg = isAllow ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                        : r.action === "ASK" ? "bg-amber-100 text-amber-800 border-amber-300" : "bg-rose-100 text-rose-800 border-rose-300";
+                    const badgeText = isAllow ? "Cho mở" : r.action === "ASK" ? "Cần xin phép" : "Chặn";
                     const icon = r.rule_type === "WEBSITE" ? "🌐" : "📱";
 
                     let remText = r.time_limit_minutes > 0 ? `${r.remaining_formatted}` : "Vô hạn";
@@ -1079,12 +1093,14 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                     })
                 });
 
-                if (res.ok) {
-                    showToast(`Đã thêm quy tắc cho "${target}"!`, "success");
-                    document.getElementById("newRuleValue").value = "";
-                    fetchRules();
-                    fetchUsageStats();
+                if (!res.ok) {
+                    const error = await res.json();
+                    throw new Error(typeof error.detail === "string" ? error.detail : "Kiểm tra thông tin quy tắc.");
                 }
+                showToast(`Đã thêm quy tắc cho "${target}"!`, "success");
+                document.getElementById("newRuleValue").value = "";
+                fetchRules();
+                fetchUsageStats();
             } catch (err) {
                 alert("Lỗi thêm quy tắc: " + err.message);
             }
@@ -1139,6 +1155,13 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
         }
 
         window.addEventListener("DOMContentLoaded", async () => {
+            const ruleType = document.getElementById("newRuleType");
+            const ruleAction = document.getElementById("newRuleAction");
+            ruleType.addEventListener("change", () => {
+                const app = ruleType.value === "APP";
+                ruleAction.querySelector('option[value="ASK"]').disabled = app;
+                if (app && ruleAction.value === "ASK") ruleAction.value = "ALLOW";
+            });
             updateSoundUI();
             initWebSocket();
             fetchRequests();

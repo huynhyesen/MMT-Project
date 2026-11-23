@@ -334,6 +334,29 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         }
 
         // --- SUB-TABS TRONG FORM XIN PHÉP ---
+        let webRequestKind = null;
+
+        function openBrowserRequest() {
+            const url = new URL(location.href);
+            const kind = url.searchParams.get("web_request");
+            if (!["ask", "expired", "daily"].includes(kind)) return;
+            const host = url.searchParams.get("host") || "";
+            if (kind !== "daily" && !/^[a-z0-9.-]{1,253}$/.test(host)) return;
+
+            url.searchParams.delete("web_request");
+            url.searchParams.delete("host");
+            history.replaceState(null, "", url);
+            switchChildTab("request");
+            switchFormTab(kind === "daily" ? "time" : "unlock");
+            if (kind !== "daily") {
+                webRequestKind = kind;
+                document.getElementById("unlock-target").value = host;
+                document.getElementById("unlock-type").value = "WEBSITE";
+                document.getElementById("unlock-submit-label").textContent =
+                    kind === "expired" ? "Xin thêm giờ cho trang này" : "Gửi yêu cầu xin mở trang";
+            }
+        }
+
         function switchFormTab(tab) {
             const btnTime = document.getElementById("tab-btn-time");
             const btnUnlock = document.getElementById("tab-btn-unlock");
@@ -415,7 +438,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             }
 
             const payload = {
-                request_type: `PERMISSION_${targetType}`,
+                request_type: webRequestKind === "expired" ? "WEB_TIME_EXTENSION" : `PERMISSION_${targetType}`,
                 target_detail: target,
                 category: category,
                 requested_minutes: minutes,
@@ -431,6 +454,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 if (res.ok) {
                     showToast(`Đã gửi yêu cầu xin mở "${target}" tới Cha Mẹ! 📨`, "emerald");
                     document.getElementById("unlock-target").value = "";
+                    webRequestKind = null;
+                    document.getElementById("unlock-submit-label").textContent = "Gửi yêu cầu xin mở trang";
                     document.getElementById("unlock-reason").value = "";
                     fetchChildRequests();
                     switchChildTab('history');
@@ -485,7 +510,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
 
                             <div>
                                 ${isWeb ? `
-                                    <button data-target="${escapeHtml(r.target_value)}" onclick="openApprovedWebsite(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                    <button data-target="${escapeHtml(r.target_value)}" onclick="openWebsite(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
                                         <span>Mở trang web</span> ↗
                                     </button>
                                 ` : `
@@ -515,7 +540,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 window.dispatchEvent(new CustomEvent("mmt-web-connect", { detail: await response.json() }));
                 setTimeout(() => {
                     status.textContent = document.documentElement.dataset.mmtWebTracking === "connected"
-                        ? "Tiện ích MMT đang đo thời gian của tab web được phép trong hồ sơ trình duyệt này."
+                        ? "Tiện ích MMT đang lọc web và đếm giờ trong hồ sơ trình duyệt này."
                         : "Cài tiện ích MMT cho Chrome hoặc Edge để đếm thời gian và chặn trang 18+ trong trình duyệt.";
                     status.classList.remove("hidden");
                 }, 800);
@@ -525,7 +550,16 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             }
         }
 
-        async function openApprovedWebsite(target) {
+        async function openWebsite(target) {
+            let address;
+            try {
+                const value = target.trim();
+                address = new URL(value.includes("://") ? value : `https://${value}`);
+                if (!["http:", "https:"].includes(address.protocol) || address.username || address.password) throw new Error();
+            } catch {
+                showToast("Nhập địa chỉ web hợp lệ.", "rose");
+                return;
+            }
             // Open from the click before the permission request so popup blockers allow it.
             const tab = window.open("about:blank", "_blank");
             if (!tab) {
@@ -537,12 +571,21 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 const response = await fetch(`${API_BASE}/check-permission/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target, rule_type: "WEBSITE" })
+                    body: JSON.stringify({ target: address.hostname, rule_type: "WEBSITE" })
                 });
                 if (!response.ok) throw new Error("Không thể kiểm tra quyền truy cập.");
                 const result = await response.json();
-                if (!result.allowed) throw new Error(result.reason);
-                tab.location.replace(`https://${result.target}`);
+                if (!result.allowed) {
+                    const kind = result.requires_permission ? "ask" : result.is_expired
+                        ? (result.time_limit_minutes != null ? "expired" : "daily") : "";
+                    if (!kind) throw new Error(result.reason);
+                    const request = new URL("/child/", API_BASE);
+                    request.searchParams.set("web_request", kind);
+                    if (kind !== "daily") request.searchParams.set("host", result.target);
+                    tab.location.replace(request.href);
+                    return;
+                }
+                tab.location.replace(address.href);
             } catch (error) {
                 tab.close();
                 showToast(error.message, "rose");
@@ -703,6 +746,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     countdownSeconds = -1;
                     lastServerDailyLimit = null;
                     await fetchActiveChild();
+                    openBrowserRequest();
                     initWebSocket();
                     connectWebTracking();
                     fetchAllowedRules();
@@ -720,22 +764,22 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         // --- BIỂU ĐỒ THÂN THIỆN CHO TRẺ ---
         let childChart = null;
 
-        function updateChildChart(learning, entertainment, social) {
+        function updateChildChart(learning, entertainment, social, unclassified) {
             const ctx = document.getElementById("childUsageChart");
             if (!ctx) return;
-            const total = (learning || 0) + (entertainment || 0) + (social || 0);
+            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0);
             const legendEl = document.getElementById("child-chart-legend");
             if (legendEl) {
                 if (total === 0) {
                     legendEl.textContent = "Chưa có hoạt động hôm nay";
                 } else {
-                    legendEl.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b>`;
+                    legendEl.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>`;
                 }
             }
 
-            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0];
-            const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6'];
-            const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội'];
+            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0, unclassified || 0];
+            const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6', '#64748b'];
+            const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội', 'Chưa phân loại'];
 
             if (childChart) {
                 childChart.data.datasets[0].data = dataValues;
@@ -876,7 +920,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 updateChildChart(
                     data.learning_seconds ?? (data.learning_minutes || 0) * 60,
                     data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
-                    data.social_seconds ?? (data.social_minutes || 0) * 60
+                    data.social_seconds ?? (data.social_minutes || 0) * 60,
+                    data.unclassified_seconds ?? 0
                 );
 
                 const totalMins = data.total_minutes || 0;
@@ -1056,7 +1101,10 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             await fetchActiveChild();
             initWebSocket();
             if (!currentChild) openChildLoginModal();
-            else connectWebTracking();
+            else {
+                openBrowserRequest();
+                connectWebTracking();
+            }
             fetchAllowedRules();
             fetchUsageStats();
             fetchChildRequests();

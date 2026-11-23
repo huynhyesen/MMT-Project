@@ -7,9 +7,9 @@ MMT giúp phụ huynh quản lý thời gian sử dụng máy tính của trẻ 
 | Thành phần | Chức năng |
 | --- | --- |
 | Dashboard phụ huynh | Tạo hồ sơ và mã ghép nối, đặt hạn mức ngày và giờ giới nghiêm, quản lý quy tắc web và ứng dụng, duyệt hoặc từ chối yêu cầu, xem báo cáo và cảnh báo. |
-| Góc Của Con | Đăng nhập bằng PIN, xem thời gian còn lại, mở web đã được duyệt, xin thêm giờ hoặc xin mở web và ứng dụng, xem phản hồi và lịch sử yêu cầu. |
+| Góc Của Con | Đăng nhập bằng PIN, xem thời gian còn lại, mở web và gửi yêu cầu khi gặp giới hạn, xin thêm giờ hoặc xin mở web và ứng dụng, xem phản hồi và lịch sử yêu cầu. |
 | Agent máy con | Đồng bộ quy tắc, ghi nhận hoạt động ứng dụng, chặn ứng dụng theo quy tắc và khóa màn hình khi đến giờ giới nghiêm hoặc hết hạn mức ngày. Khi máy con đang kết nối, phụ huynh có thể khóa, mở khóa hoặc gửi lời nhắn tới máy đã chọn. |
-| Tiện ích Chrome/Edge | Đếm thời gian của tab web được phép đang sử dụng và chặn các tên miền 18+ trong danh sách lọc. |
+| Tiện ích Chrome/Edge | Duyệt web tự do có lọc, đếm giờ tab đang sử dụng, chặn và cảnh báo tên miền 18+ trong danh sách lọc. |
 | Backend | Lưu hồ sơ, yêu cầu và dữ liệu sử dụng trong SQLite, tách báo cáo theo thiết bị và đặt lại bộ đếm khi sang ngày mới theo giờ của máy chủ. |
 
 ## Chuẩn bị
@@ -61,13 +61,22 @@ Cài tiện ích trong hồ sơ Chrome hoặc Edge mà trẻ sử dụng trên m
 
 1. Mở `chrome://extensions` hoặc `edge://extensions`.
 2. Bật **Chế độ dành cho nhà phát triển**, chọn **Tải tiện ích đã giải nén** (*Load unpacked*) và chọn thư mục `browser-extension` trong dự án.
-3. Mở lại **Góc Của Con** từ Agent và đăng nhập PIN. Chờ dòng **Tiện ích MMT đang đo thời gian của tab web được phép**. Sau khi khởi động lại trình duyệt, mở lại dashboard để kết nối phiên theo dõi.
+3. Mở lại **Góc Của Con** từ Agent và đăng nhập PIN. Chờ dòng **Tiện ích MMT đang lọc web và đếm giờ trong hồ sơ trình duyệt này**. Sau khi khởi động lại trình duyệt, mở lại dashboard để kết nối phiên theo dõi.
 
-Trẻ có thể xin mở web trong **Xin phép**. Sau khi phụ huynh duyệt, trẻ mở trang từ **Được phép** hoặc nhập địa chỉ trực tiếp. Tiện ích tính số giây cho tên miền đã được duyệt khi tab được chọn, cửa sổ trình duyệt có tiêu điểm và có hoạt động. Video có tiếng trong tab đang hiển thị vẫn được tính khi trẻ xem mà không chạm chuột hay bàn phím. Số liệu được gửi khi chuyển tab và định kỳ khoảng 30 giây. Trang **Thống kê** trên dashboard phụ huynh tự làm mới khi đang hiển thị. Dữ liệu đếm giờ web gửi về Backend gồm tên miền và số giây.
+Web thông thường và tên miền chưa phân loại được mở ngay. Trên dashboard phụ huynh, dùng **Quy tắc Web/App** để đặt riêng một tên miền:
 
-Nếu một trang đã duyệt chưa hiện trong thống kê, kiểm tra tiện ích đã báo kết nối, tab web nằm trong cùng hồ sơ Chrome/Edge và báo cáo đang chọn đúng trẻ. Nếu trang chuyển sang tên miền khác với tên miền đã duyệt, kiểm tra địa chỉ cuối cùng trên thanh địa chỉ.
+| Quy tắc | Khi trẻ mở web |
+| --- | --- |
+| **Cho mở** | Mở được trong hạn mức đã lưu. Chọn **Không giới hạn** nếu không muốn giới hạn riêng trang đó. |
+| **Cần xin phép** | Trang thông báo có nút **Xin phép**, điền sẵn tên miền vào yêu cầu. |
+| **Chặn** | Tiện ích chặn tên miền và tên miền con theo quy tắc đã lưu. |
+| **Hết giờ** | Tab đang sử dụng chuyển sang màn hình hết giờ và có nút **Xin thêm giờ**. |
 
-Tiện ích chặn các tên miền và mẫu tên miền 18+ trong danh sách lọc, kể cả khi nhập địa chỉ trực tiếp. Để chặn thêm trang, vào **Quy tắc Web/App** trên dashboard phụ huynh, chọn **Website → Chặn** rồi lưu tên miền. Sau khi Góc Của Con kết nối tiện ích, Chrome/Edge cập nhật quy tắc khoảng 30 giây một lần và chặn tên miền đó cùng các tên miền con. Agent bổ sung lớp chặn các tên miền phổ biến qua file `hosts` khi chạy với quyền quản trị. Phạm vi lọc phụ thuộc vào danh sách tên miền và trình duyệt đã bật tiện ích. Nội dung 18+ bên trong một trang thông thường có thể lọt qua.
+Tiện ích đo thời gian khi tab được chọn và cửa sổ trình duyệt có tiêu điểm. Video đang phát có tiếng vẫn được tính trong tab hiển thị khi trẻ rời chuột và bàn phím. Báo cáo chỉ lưu tên miền và số giây. Trang chưa nhận diện được được xếp vào **Chưa phân loại**.
+
+Tên miền 18+ thuộc bộ lọc bị chặn trước khi tải. Trang thông báo cho trẻ biết lý do và dashboard phụ huynh nhận cảnh báo có tên miền, hồ sơ và thời điểm. Các lần thử lại trên cùng tên miền trong vòng 5 phút được gộp. Tiện ích cần một phiên Góc Của Con đã đăng nhập để gửi cảnh báo. Bộ lọc áp dụng theo tên miền, nên nội dung 18+ bên trong một nền tảng thông thường có thể lọt qua.
+
+Máy phụ huynh có thể đặt `MMT_ADULT_DOMAINS_FILE` trỏ tới một file UTF-8 với mỗi tên miền trên một dòng. Backend đọc lại file định kỳ và gửi danh sách bổ sung cho tiện ích. Có thể cập nhật file từ một nguồn đã kiểm duyệt mà không gửi lịch sử duyệt web ra ngoài MMT. File hỗ trợ tối đa 10.000 tên miền và dung lượng tối đa khoảng 1 MiB.
 
 ### 4. Đặt giờ giới nghiêm
 

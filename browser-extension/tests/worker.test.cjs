@@ -4,132 +4,143 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const extension = path.join(__dirname, "..");
+const folder = path.join(__dirname, "..");
+const source = readFileSync(path.join(folder, "worker.js"), "utf8");
+const adultRules = JSON.parse(readFileSync(path.join(folder, "adult-rules.json"), "utf8"));
 const origin = "http://127.0.0.1:8008";
-const dashboard = origin + "/child/#device=test-enrollment";
-const host = "lesson.example";
+const extensionOrigin = "chrome-extension://fixture/";
 const token = "ab123456-cd12-34ef-5678-abcdefabcdef.1680000000." + "a".repeat(64);
 
-test("content script starts on the dashboard including links with enrollment fragments", () => {
-    const manifest = JSON.parse(readFileSync(path.join(extension, "manifest.json"), "utf8"));
-    const [script] = manifest.content_scripts;
-    assert.deepEqual(script.matches, ["http://*/child/*", "https://*/child/*"]);
-    assert.equal(script.include_globs, undefined);
-    assert.equal(script.run_at, "document_start");
-});
-
-test("a newly approved site is counted on another tab after the dashboard closes", async () => {
+function fakeBrowser(policy) {
     const handlers = {};
+    const writes = [];
+    const storage = {};
     const reports = [];
-    const event = name => ({ addListener(handler) { handlers[name] = handler; } });
-    let policy = [];
-    let blocked = [];
-    let browserRules = [];
+    const alerts = [];
+    const event = name => ({ addListener(callback) { handlers[name] = callback; } });
+    let installed = [];
+    let now = 1000;
+    let page = { id: 4, url: origin + "/child/" };
     let activity = "active";
-    let storedTracking;
-    let now = 100000;
-    let activeTab = { url: dashboard };
-    let alarmName;
+
     const chrome = {
-        runtime: { onMessage: event("message") },
-        declarativeNetRequest: {
-            getDynamicRules: async () => structuredClone(browserRules),
-            updateDynamicRules: async ({ removeRuleIds, addRules }) => {
-                browserRules = [
-                    ...browserRules.filter(rule => !removeRuleIds.includes(rule.id)),
-                    ...structuredClone(addRules)
-                ];
-            }
+        runtime: {
+            getURL: file => extensionOrigin + file,
+            onMessage: event("message"), onInstalled: event("installed"), onStartup: event("startup"),
         },
-        tabs: {
-            query: async () => [activeTab],
-            onActivated: event("activated"),
-            onUpdated: event("updated"),
-            onRemoved: event("removed")
-        },
-        windows: {
-            getLastFocused: async () => ({ id: 1, focused: true }),
-            onFocusChanged: event("focus")
-        },
+        alarms: { get: async () => null, create: async () => {}, onAlarm: event("alarm") },
+        windows: { getLastFocused: async () => ({ focused: true, id: 1 }), onFocusChanged: event("focus") },
         idle: { queryState: async () => activity, setDetectionInterval() {}, onStateChanged: event("idle") },
-        alarms: {
-            get: async () => alarmName,
-            create: async name => { alarmName = name; },
-            onAlarm: event("alarm")
-        },
         storage: { session: {
-            get: async () => ({ tracking: structuredClone(storedTracking) }),
-            set: async ({ tracking }) => { storedTracking = structuredClone(tracking); }
-        } }
+            get: async key => ({ [key]: structuredClone(storage[key]) }),
+            set: async value => { Object.assign(storage, structuredClone(value)); },
+            remove: async key => { delete storage[key]; },
+        }},
+        tabs: {
+            query: async () => [page], get: async () => page,
+            update: async (id, { url }) => { writes.push(url); page = { id, url }; },
+            onActivated: event("activated"), onUpdated: event("updated"), onRemoved: event("removed"),
+        },
+        declarativeNetRequest: {
+            getDynamicRules: async () => structuredClone(installed),
+            updateDynamicRules: async ({ removeRuleIds, addRules }) => {
+                installed = installed.filter(rule => !removeRuleIds.includes(rule.id)).concat(structuredClone(addRules));
+            },
+        },
     };
     const context = vm.createContext({
         chrome, URL, AbortSignal, console, Date: { now: () => now },
         fetch: async (url, options) => {
+            if (url === extensionOrigin + "adult-rules.json") return { json: async () => adultRules };
             assert.equal(options.headers.Authorization, "Bearer " + token);
             if (url === origin + "/web-tracking/policy") {
-                return { ok: true, json: async () => ({ targets: policy, blocked }) };
+                return { ok: true, json: async () => structuredClone(policy) };
+            }
+            const payload = JSON.parse(options.body);
+            if (url === origin + "/web-tracking/alert") {
+                alerts.push(payload);
+                return { ok: true };
             }
             assert.equal(url, origin + "/web-tracking/usage");
-            reports.push(JSON.parse(options.body));
-            return { ok: true };
-        }
+            reports.push(payload);
+            if (policy.remaining?.[payload.host] != null) {
+                const left = Math.max(0, policy.remaining[payload.host] - payload.duration_seconds);
+                policy.remaining[payload.host] = left;
+                if (!left) {
+                    policy.expired.push(payload.host);
+                    policy.expired_usage = { [payload.host]: 1800 };
+                }
+                return { ok: true, json: async () => ({ remaining_seconds: left }) };
+            }
+            return { ok: true, json: async () => ({}) };
+        },
     });
-    vm.runInContext(readFileSync(path.join(extension, "worker.js"), "utf8"), context);
-    const settle = () => vm.runInContext("pendingTask", context);
-    const connected = await new Promise(resolve => {
-        handlers.message({ type: "connect", origin, token, targets: [] }, { url: dashboard }, resolve);
+    vm.runInContext(source, context);
+    return {
+        handlers, writes, reports, alerts,
+        rules: () => installed,
+        navigate: (url, audible = false) => { page = { id: 4, url, audible }; },
+        setActivity: state => { activity = state; },
+        advance: ms => { now += ms; },
+        settle: () => vm.runInContext("work", context),
+        message: (value, sender) => new Promise(resolve => handlers.message(value, sender, resolve)),
+        connect: () => new Promise(resolve => handlers.message({
+            type: "connect", origin, token
+        }, { url: origin + "/child/#device=fixture" }, resolve)),
+    };
+}
+
+test("the manifest exposes the notice page and attaches only the bridge to dashboard pages", () => {
+    const manifest = JSON.parse(readFileSync(path.join(folder, "manifest.json"), "utf8"));
+    assert.deepEqual(manifest.content_scripts[0].matches, ["http://*/child/*", "https://*/child/*"]);
+    assert.equal(manifest.content_scripts[0].run_at, "document_start");
+    assert.deepEqual(manifest.web_accessible_resources[0].resources, ["blocked.html"]);
+});
+
+test("the browser redirects adult and restricted sites, passing only the domain", async () => {
+    const policy = { targets: [], ask: ["lesson.example"], blocked: ["blocked.example"], adult: ["extra.example"] };
+    const browser = fakeBrowser(policy);
+    assert.equal((await browser.connect()).connected, true);
+    const match = browser.rules().find(rule =>
+        rule.action.redirect.regexSubstitution.includes("kind=adult") &&
+        new RegExp(rule.condition.regexFilter).test("https://test-p0rn.example/path?private=1") &&
+        !rule.condition.requestDomains
+    );
+    assert(match);
+    assert.equal(new RegExp(match.condition.regexFilter).exec("https://test-p0rn.example/path?private=1")[1], "test-p0rn.example");
+    assert(browser.rules().some(rule => rule.condition.requestDomains?.includes("extra.example")));
+    const ask = browser.rules().find(rule => rule.action.redirect.regexSubstitution.includes("kind=ask"));
+    assert(new RegExp(ask.condition.regexFilter).test("https://www.lesson.example/"));
+    assert(!new RegExp(ask.condition.regexFilter).test("https://other.example/"));
+    assert(ask.condition.excludedRequestDomains.includes("127.0.0.1"));
+
+    const context = await browser.message({ type: "blocked-page", kind: "adult", host: "test-p0rn.example" }, {
+        url: extensionOrigin + "blocked.html?kind=adult&host=test-p0rn.example"
     });
-    assert.equal(connected.connected, true);
+    assert.equal(context.origin, origin);
+    assert.deepEqual(browser.alerts, [{ host: "test-p0rn.example" }]);
+});
 
-    activeTab = { url: "about:blank" };
-    handlers.removed(1);
-    await settle();
-    policy = [host];
-    activeTab = { url: "https://www.lesson.example/chapter?topic=math" };
-    handlers.updated(2, { url: activeTab.url });
-    await settle();
+test("the worker records ordinary websites and redirects the active tab when its limit expires", async () => {
+    const policy = {
+        targets: ["lesson.example"], expired: [], remaining: { "lesson.example": 3 }, track_unrestricted: true
+    };
+    const browser = fakeBrowser(policy);
+    assert.equal((await browser.connect()).connected, true);
 
-    now += 5500;
-    activeTab = { url: "https://unapproved.example/" };
-    handlers.activated({ tabId: 3, windowId: 1 });
-    await settle();
-    assert.deepEqual(reports, [{ host, duration_seconds: 5 }]);
+    browser.navigate("https://ordinary.example/");
+    browser.handlers.updated(4, { url: "https://ordinary.example/" });
+    await browser.settle();
+    browser.advance(6000);
+    browser.navigate("https://www.lesson.example/watch?private=test", true);
+    browser.handlers.activated();
+    await browser.settle();
+    assert.deepEqual(browser.reports[0], { host: "ordinary.example", duration_seconds: 6 });
 
-    now += 10000;
-    handlers.alarm({ name: alarmName });
-    await settle();
-    assert.equal(reports.length, 1);
-
-    policy.push("youtube.com");
-    activeTab = { url: "https://www.youtube.com/watch?v=fixture", audible: true };
-    activity = "idle";
-    handlers.updated(4, { url: activeTab.url });
-    await settle();
-
-    now += 12000;
-    handlers.alarm({ name: alarmName });
-    await settle();
-    assert.deepEqual(reports[1], { host: "youtube.com", duration_seconds: 12 });
-
-    activity = "locked";
-    handlers.idle(activity);
-    await settle();
-    now += 15000;
-    handlers.alarm({ name: alarmName });
-    await settle();
-    assert.equal(reports.length, 2);
-
-    blocked = ["blocked.example"];
-    handlers.alarm({ name: alarmName });
-    await settle();
-    assert.equal(browserRules.length, 1);
-    assert.equal(browserRules[0].action.type, "block");
-    assert.deepEqual(browserRules[0].condition.requestDomains, ["blocked.example"]);
-    assert.deepEqual(browserRules[0].condition.excludedRequestDomains, ["127.0.0.1"]);
-    assert.deepEqual(browserRules[0].condition.resourceTypes, ["main_frame", "sub_frame"]);
-
-    blocked = [];
-    handlers.alarm({ name: alarmName });
-    await settle();
-    assert.deepEqual(browserRules, []);
+    browser.setActivity("idle");
+    browser.advance(4000);
+    browser.handlers.message({ type: "pulse" }, { tab: { active: true } });
+    await browser.settle();
+    assert.deepEqual(browser.reports[1], { host: "lesson.example", duration_seconds: 4 });
+    assert.deepEqual(browser.writes, [extensionOrigin + "blocked.html?kind=expired&host=lesson.example"]);
 });
