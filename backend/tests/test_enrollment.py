@@ -162,6 +162,27 @@ def test_approved_web_usage_and_adult_blocking(parent_credentials):
         assert extension.post("/web-tracking/usage", json={
             "host": "porn.example", "duration_seconds": 10,
         }).status_code == 403
+        explicit = parent.post("/rules/", json={
+            "rule_type": "WEBSITE", "target_value": "https://blocked.example", "action": "BLOCK",
+        })
+        assert explicit.status_code == 201
+        policy = extension.get("/web-tracking/policy").json()
+        assert "blocked.example" in policy["blocked"]
+        assert "porn.example" in policy["blocked"]
+        assert "lesson.example" in policy["targets"]
+        with database.SessionLocal() as db:
+            db.add(models.AppWebRule(
+                device_id=device_id, rule_type="WEBSITE", target_value="sub.blocked.example", action="ALLOW",
+            ))
+            db.commit()
+        policy = extension.get("/web-tracking/policy").json()
+        assert "sub.blocked.example" not in policy["targets"]
+        assert extension.post("/web-tracking/usage", json={
+            "host": "sub.blocked.example", "duration_seconds": 15,
+        }).status_code == 403
+        assert parent.delete("/rules/" + explicit.json()["id"]).status_code == 200
+        assert "blocked.example" not in extension.get("/web-tracking/policy").json()["blocked"]
+
         assert parent.delete(f"/children/{child['id']}").status_code == 200
 
 
@@ -320,5 +341,100 @@ def test_youtube_approval_counts_as_entertainment(parent_credentials, monkeypatc
                 "host": "youtube.com", "duration_seconds": 1,
             }).status_code == 201
             assert child_browser.post("/check-permission/", json=target).json()["is_expired"] is True
+    finally:
+        engine.dispose()
+
+
+def test_free_browsing_blocks_adult_domains_and_enforces_website_limits(parent_credentials, monkeypatch, tmp_path):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from agent import web_policy
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'browsing.db'}")
+    models.Base.metadata.create_all(engine)
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(web_policy, "_additional_hosts", frozenset())
+    monkeypatch.setattr(web_policy, "_next_domain_check", 0)
+    feed = tmp_path / "adult-domains.txt"
+    feed.write_text("example-filtered.test\n", encoding="utf-8")
+    monkeypatch.setenv("MMT_ADULT_DOMAINS_FILE", str(feed))
+
+    try:
+        with (
+            TestClient(main.app, headers=basic(parent_credentials)) as parent,
+            TestClient(main.app) as agent,
+            TestClient(main.app) as child,
+            TestClient(main.app) as extension,
+        ):
+            assert parent.post("/curfew/", json={"bedtime": "00:00", "wakeup_time": "00:00"}).status_code == 200
+            profile, credential = enroll(parent, agent, "Free browsing test", "mmt-free-browser")
+            device_id, token = credential.split(".")
+            assert child.post("/children/login", headers={
+                "Authorization": f"Bearer {device_id}.{security.dashboard_key(token)}",
+            }, json={"child_id": profile["id"], "pin": "2580"}).status_code == 200
+            state = child.get("/web-tracking/session").json()
+            assert state["track_unrestricted"] is True
+            assert "example-filtered.test" in state["adult"]
+            extension.headers["Authorization"] = f"Bearer {state['token']}"
+
+            def access(host):
+                return child.post("/check-permission/", json={"target": host, "rule_type": "WEBSITE"}).json()
+
+            assert access("ordinary.example")["allowed"] is True
+            assert extension.post("/web-tracking/usage", json={"host": "ordinary.example", "duration_seconds": 13}).status_code == 201
+            report = parent.get(f"/usage-stats/?child_id={profile['id']}").json()
+            assert report["unclassified_seconds"] == 13
+            assert report["items"][0]["category"] == "Chưa phân loại"
+            assert report["items"][0]["time_limit_minutes"] == 0
+            assert report["items"][0]["is_expired"] is False
+
+            configured = parent.post("/rules/", json={
+                "rule_type": "WEBSITE", "target_value": "lesson.example",
+                "action": "ASK", "time_limit_minutes": 1,
+            })
+            assert configured.status_code == 201
+            assert access("lesson.example")["requires_permission"] is True
+            assert "lesson.example" in extension.get("/web-tracking/policy").json()["ask"]
+
+            def approve(kind, minutes):
+                response = child.post("/requests/", json={
+                    "request_type": kind, "target_detail": "lesson.example",
+                    "reason_from_child": "Bài tập", "requested_minutes": minutes,
+                })
+                assert response.status_code == 201, response.text
+                decided = parent.patch(f"/requests/{response.json()['id']}", json={"status": "APPROVED"})
+                assert decided.status_code == 200, decided.text
+
+            approve("PERMISSION_WEBSITE", 2)
+            assert access("lesson.example")["time_limit_minutes"] == 1
+            receipt = extension.post("/web-tracking/usage", json={
+                "host": "lesson.example", "duration_seconds": 65,
+            })
+            assert receipt.status_code == 201
+            assert receipt.json()["recorded_seconds"] == 60
+            assert receipt.json()["remaining_seconds"] == 0
+            assert access("lesson.example")["is_expired"] is True
+            policy = extension.get("/web-tracking/policy").json()
+            assert policy["expired_usage"]["lesson.example"] == 60
+            assert "lesson.example" in policy["expired"]
+            approve("WEB_TIME_EXTENSION", 5)
+            assert access("lesson.example")["time_limit_minutes"] == 6
+            assert "lesson.example" in extension.get("/web-tracking/policy").json()["targets"]
+
+            assert access("example-filtered.test")["allowed"] is False
+            assert extension.post("/web-tracking/alert", json={"host": "ordinary.example"}).status_code == 422
+            for host in ("www.example-filtered.test", "example-filtered.test"):
+                response = extension.post("/web-tracking/alert", json={"host": host})
+                assert response.status_code == 200
+            [alert] = parent.get("/alerts/").json()
+            assert alert["target_value"] == "example-filtered.test"
+            assert alert["attempt_count"] == 3
+            assert alert["child_name"] == "Free browsing test"
+
+            feed.write_text("updated-filter.test\n", encoding="utf-8")
+            monkeypatch.setattr(web_policy, "_next_domain_check", 0)
+            policy = extension.get("/web-tracking/policy").json()
+            assert policy["adult"] == ["updated-filter.test"]
     finally:
         engine.dispose()

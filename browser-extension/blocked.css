@@ -1,0 +1,44 @@
+:root {
+    color-scheme: light;
+    font: 16px/1.55 system-ui, sans-serif;
+    color: #17283b;
+    background: #f1f5f9;
+}
+* { box-sizing: border-box; }
+body {
+    display: grid;
+    min-height: 100dvh;
+    margin: 0;
+    padding: 24px;
+    place-items: center;
+}
+.card {
+    width: min(100%, 520px);
+    padding: clamp(24px, 5vw, 48px);
+    border: 1px solid #d6e0eb;
+    border-radius: 24px;
+    background: white;
+    box-shadow: 0 16px 36px #14365b12;
+}
+.brand {
+    margin: 0 0 28px;
+    font-weight: 800;
+    color: #1d4ed8;
+}
+h1 { margin: 0; line-height: 1.18; font-size: clamp(26px, 5vw, 36px); }
+.host { color: #1e40af; font-weight: 700; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.actions > * {
+    border: 1px solid #cad5e2;
+    border-radius: 12px;
+    padding: 9px 16px;
+    color: #17283b;
+    background: white;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 700;
+    text-decoration: none;
+}
+.actions .primary { background: #1d4ed8; color: white; border-color: #1d4ed8; }
+.actions > :focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
+[hidden] { display: none !important; }

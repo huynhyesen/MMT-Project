@@ -427,7 +427,7 @@
                         <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
                             <span>🛡️</span> Quản Lý Quy Tắc Web & Phần Mềm
                         </h2>
-                        <p class="text-xs text-slate-500">Danh sách các trang web / ứng dụng được Cho phép hoặc Chặn</p>
+                        <p class="text-xs text-slate-500">Web thông thường được mở tự do. Thêm quy tắc cho những trang cần quản lý riêng.</p>
                     </div>
                     <button onclick="fetchRules()" class="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
                         🔄 Làm mới
@@ -449,7 +449,8 @@
                     </select>
                     <div class="flex gap-1.5">
                         <select id="newRuleAction" class="border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none flex-1 bg-white">
-                            <option value="ALLOW">Cho phép</option>
+                            <option value="ALLOW">Cho mở</option>
+                            <option value="ASK">Cần xin phép</option>
                             <option value="BLOCK">Chặn</option>
                         </select>
                         <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-2 rounded-lg text-xs transition">
@@ -519,10 +520,10 @@
                 <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
                     <div>
                         <h2 class="text-base font-bold text-rose-700 flex items-center gap-2">
-                            <span>🚨</span> Cảnh Báo Truy Cập Web Lạ & Chưa Cấp Phép
+                            <span>🚨</span> Cảnh báo 18+ và hoạt động bị chặn
                             <span id="alerts-count-badge" class="bg-rose-100 text-rose-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
                         </h2>
-                        <p class="text-xs text-slate-500">Phát hiện khi trẻ tự ý truy cập các trang web lạ hoặc mở app bị chặn</p>
+                        <p class="text-xs text-slate-500">Tên miền, hồ sơ trẻ, thời điểm và số lần bị chặn</p>
                     </div>
                     <button onclick="clearAllAlerts()" class="text-xs text-slate-400 hover:text-rose-600 transition flex items-center gap-1 font-medium">
                         <span>🧹 Xóa sạch cảnh báo</span>
@@ -530,7 +531,7 @@
                 </div>
 
                 <div id="alerts-list-container" class="space-y-2 max-h-80 overflow-y-auto">
-                    <p class="text-slate-400 text-xs italic py-4 text-center">Chưa có cảnh báo vi phạm nào. An toàn tuyệt đối! 🟢</p>
+                    <p class="text-slate-400 text-xs italic py-4 text-center">Chưa có cảnh báo.</p>
                 </div>
             </div>
         </div>

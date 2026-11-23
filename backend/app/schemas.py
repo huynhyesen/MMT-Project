@@ -11,8 +11,11 @@ class TelemetryCreate(BaseModel):
     domain: Optional[str] = None
     duration_seconds: int = Field(ge=0)
 
-class WebUsageCreate(BaseModel):
-    host: str = Field(max_length=253)
+class WebHost(BaseModel):
+    host: str = Field(min_length=1, max_length=253)
+
+
+class WebUsageCreate(WebHost):
     duration_seconds: int = Field(ge=1, le=120)
 
 
@@ -26,7 +29,7 @@ class ChildRequestCreate(BaseModel):
     target_detail: Optional[str] = None
     reason_from_child: Optional[str] = "Con xin phép cha mẹ"
     category: Optional[str] = None
-    requested_minutes: Optional[int] = 0
+    requested_minutes: Optional[int] = Field(default=0, ge=0, le=1440)
 
 class ChildRequestResponse(BaseModel):
     id: int
@@ -73,6 +76,7 @@ class UsageStatsResponse(BaseModel): #default
     social_formatted: str
     utilities_minutes: int
     utilities_seconds: int = 0
+    unclassified_seconds: int = 0
     utilities_formatted: str
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
@@ -89,8 +93,8 @@ class UsageStatsResponse(BaseModel): #default
 class AppWebRuleCreate(BaseModel):
     rule_type: str # 'APP' hoặc 'WEBSITE'
     target_value: str
-    action: Optional[str] = "ALLOW" # 'ALLOW' hoặc 'BLOCK'
-    time_limit_minutes: Optional[int] = 60 # Giới hạn thời gian mặc định
+    action: Optional[Literal["ALLOW", "ASK", "BLOCK"]] = "ALLOW"
+    time_limit_minutes: Optional[int] = Field(default=60, ge=0, le=1440)
 
 class SetLimitRequest(BaseModel):
     target_name: str
@@ -155,6 +159,8 @@ class AlertLogCreate(BaseModel):
 
 class AlertLogResponse(BaseModel):
     id: int
+    child_name: Optional[str] = None
+    attempt_count: int = 1
     target_value: str
     reason: str
     category: Optional[str] = "UNAPPROVED_ACCESS"

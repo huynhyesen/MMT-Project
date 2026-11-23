@@ -9,7 +9,9 @@ import signal
 import urllib.request
 
 # Nạp các module thành phần cốt lõi của Agent
-from monitor import get_active_app_metadata
+from monitor import (
+    IGNORE_SYSTEM_PROCS, elapsed_foreground_seconds, get_active_app_metadata, get_foreground_app, tracked_app,
+)
 from web_policy import (
     ADULT_BLOCK_DOMAINS, DEFAULT_BLOCKED_HOSTS, blocked_hosts_for_agent, is_adult_host, normalize_host,
 )
@@ -122,22 +124,12 @@ def get_ws_url(http_url: str):
 BACKEND_HTTP = resolve_backend_url()
 URI = get_ws_url(BACKEND_HTTP)
 
-BROWSER_PROCESSES = {
-    "chrome", "chromium", "chromium-browser", "msedge", "microsoft-edge", "firefox",
-    "brave", "brave-browser", "opera", "vivaldi", "coccoc", "browser",
-}
 DEFAULT_BLOCKED_KEYWORDS = {"discord", "youtube", "facebook", "tiktok", "roblox"}
 BLOCKED_KEYWORDS = DEFAULT_BLOCKED_KEYWORDS.copy()
 BLOCKED_DOMAINS = DEFAULT_BLOCKED_HOSTS | ADULT_BLOCK_DOMAINS
 
 # Danh sách ứng dụng/web được phụ huynh cho phép
 ALLOWED_TARGETS = set()
-
-IGNORE_SYSTEM_PROCS = {
-    "system", "registry", "svchost.exe", "systemd", "kworker", "dbus-daemon", 
-    "pipewire", "pulseaudio", "xorg", "gnome-shell", "bash", "python3", "python",
-    "kthreadd", "pool_workqueue", "rcu_", "irq/", "ksoftirqd", "migration"
-}
 
 active_ws = None
 
@@ -212,39 +204,41 @@ def send_telemetry(app_name: str, duration_sec: int = 10):
 
 async def monitor_apps_task():
     """Tác vụ chạy ngầm: Định kỳ quét, tắt ứng dụng bị cấm, lọc nội dung AI và gửi telemetry."""
+    poll_interval = 5
+    previous_app = None
+    previous_sample = time.monotonic()
     while True:
-        metadata_list = get_active_app_metadata() 
-        reported_count = 0
+        foreground_app = get_foreground_app()
+        now = time.monotonic()
+        metadata_list = get_active_app_metadata()
+        blocked = set()
         
         for app in metadata_list:
             app_name = app.get("app_name", "")
             app_lower = app_name.lower()
             window_title = app.get("window_title", "")
-            is_browser = app_lower.removesuffix(".exe") in BROWSER_PROCESSES
 
             # 1. AI CONTENT FILTERING: Kiểm tra tiêu đề cửa sổ theo thời gian thực
-            if window_title and not any(ign in app_lower for ign in IGNORE_SYSTEM_PROCS):
+            if window_title and not any(ignored in app_lower for ignored in IGNORE_SYSTEM_PROCS):
                 filter_res = ai_guard.inspect_text(window_title, source_name=app_name)
                 if filter_res and not filter_res.get("is_safe", True):
                     print(f"🛑 [AI CONTENT FILTER] Đã chặn cửa sổ vi phạm: '{window_title}' ({filter_res.get('label')})")
                     enforce_block_policy(app_name, filter_res.get("reason", "Nội dung độc hại"), "AI Content Filter")
                     kill_blocked_process(app_name)
+                    blocked.add(app_lower)
                     continue
 
             # Nếu ứng dụng hoặc tiêu đề cửa sổ nằm trong danh sách đã được phép -> Bỏ qua không chặn
             is_allowed = any(allowed in app_lower or (window_title and allowed in window_title.lower()) for allowed in ALLOWED_TARGETS)
             if is_allowed:
-                # Gửi telemetry thời gian học tập / sử dụng
-                if not is_browser and reported_count < 3 and not any(ign in app_lower for ign in IGNORE_SYSTEM_PROCS):
-                    send_telemetry(app_name, duration_sec=5)
-                    reported_count += 1
                 continue
             
             # Kiểm tra ứng dụng bị cấm / cần xin phép
             if any(keyword in app_lower or (window_title and keyword in window_title.lower()) for keyword in BLOCKED_KEYWORDS):
                 enforce_block_policy(app_name, "Cần xin phép phụ huynh trước khi sử dụng ứng dụng này", "Phụ huynh")
                 kill_blocked_process(app_name)
-                
+                blocked.add(app_lower)
+
                 # Ghi nhận cảnh báo về máy chủ Backend
                 try:
                     alert_payload = json.dumps({
@@ -274,12 +268,15 @@ async def monitor_apps_task():
                         pass
                 continue
 
-            # Gửi telemetry ứng dụng bình thường
-            if not is_browser and reported_count < 3 and not any(ign in app_lower for ign in IGNORE_SYSTEM_PROCS):
-                send_telemetry(app_name, duration_sec=5)
-                reported_count += 1
-                
-        await asyncio.sleep(5)
+        foreground_app = tracked_app(foreground_app)
+        if foreground_app and foreground_app.lower() in blocked:
+            foreground_app = None
+        seconds = elapsed_foreground_seconds(previous_app, foreground_app, now - previous_sample, poll_interval)
+        previous_app, previous_sample = foreground_app, now
+        if seconds:
+            send_telemetry(foreground_app, duration_sec=seconds)
+
+        await asyncio.sleep(poll_interval)
 
 async def listen_to_server():
     """Tác vụ kết nối WebSocket / Cloud Relay (Hỗ trợ cả LAN và WAN)."""
@@ -395,7 +392,7 @@ async def check_bedtime_task():
                             is_bedtime=False,
                             backend_url=BACKEND_HTTP
                         )
-                    elif rem_sec > 60 and time_limit_locked:
+                    elif rem_sec > 0 and time_limit_locked:
                         time_limit_locked = False
                         print("⏳ [AGENT] Thời gian đã được cộng thêm. Đóng Kiosk khóa.")
                         hide_kiosk_lock()

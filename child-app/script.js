@@ -12,10 +12,8 @@ const API_BASE = location.origin;
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
         let ws = null;
-        let countdownInterval = null;
         let countdownSeconds = -1;
-        let lastServerDailyLimit = null;
-        let isTickerRunning = false;
+        let usageRequestId = 0;
         let selectedMinutes = 15;
         let alert15Shown = false;
         let alert5Shown = false;
@@ -287,7 +285,6 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 showToast(`🤖 AI Content Filter vừa chặn: ${data.source || 'nội dung vi phạm'}`, "rose");
             } else if (type === "CHILD_SWITCHED" || type === "PROFILES_UPDATED") {
                 countdownSeconds = -1;
-                lastServerDailyLimit = null;
                 fetchActiveChild();
                 fetchUsageStats();
             } else if (type === "CURFEW_UPDATED") {
@@ -295,14 +292,12 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             } else if (type === "DAILY_RESET_TRIGGERED" || type === "DAILY_RESET") {
                 showToast("🌅 Chào ngày mới! Thời gian đã được làm mới tự động.", "emerald");
                 countdownSeconds = -1;
-                lastServerDailyLimit = null;
                 fetchAllowedRules();
                 fetchUsageStats();
                 fetchChildRequests();
             } else if (type === "USAGE_RESET" || type === "RULES_RESET" || type === "FULL_RESET" || type === "LIMIT_UPDATED") {
                 showToast("⚙️ Dữ liệu hệ thống vừa được cập nhật!", "blue");
                 countdownSeconds = -1;
-                lastServerDailyLimit = null;
                 fetchAllowedRules();
                 fetchUsageStats();
                 fetchChildRequests();
@@ -334,6 +329,29 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         }
 
         // --- SUB-TABS TRONG FORM XIN PHÉP ---
+        let webRequestKind = null;
+
+        function openBrowserRequest() {
+            const url = new URL(location.href);
+            const kind = url.searchParams.get("web_request");
+            if (!["ask", "expired", "daily"].includes(kind)) return;
+            const host = url.searchParams.get("host") || "";
+            if (kind !== "daily" && !/^[a-z0-9.-]{1,253}$/.test(host)) return;
+
+            url.searchParams.delete("web_request");
+            url.searchParams.delete("host");
+            history.replaceState(null, "", url);
+            switchChildTab("request");
+            switchFormTab(kind === "daily" ? "time" : "unlock");
+            if (kind !== "daily") {
+                webRequestKind = kind;
+                document.getElementById("unlock-target").value = host;
+                document.getElementById("unlock-type").value = "WEBSITE";
+                document.getElementById("unlock-submit-label").textContent =
+                    kind === "expired" ? "Xin thêm giờ cho trang này" : "Gửi yêu cầu xin mở trang";
+            }
+        }
+
         function switchFormTab(tab) {
             const btnTime = document.getElementById("tab-btn-time");
             const btnUnlock = document.getElementById("tab-btn-unlock");
@@ -415,7 +433,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             }
 
             const payload = {
-                request_type: `PERMISSION_${targetType}`,
+                request_type: webRequestKind === "expired" ? "WEB_TIME_EXTENSION" : `PERMISSION_${targetType}`,
                 target_detail: target,
                 category: category,
                 requested_minutes: minutes,
@@ -431,6 +449,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 if (res.ok) {
                     showToast(`Đã gửi yêu cầu xin mở "${target}" tới Cha Mẹ! 📨`, "emerald");
                     document.getElementById("unlock-target").value = "";
+                    webRequestKind = null;
+                    document.getElementById("unlock-submit-label").textContent = "Gửi yêu cầu xin mở trang";
                     document.getElementById("unlock-reason").value = "";
                     fetchChildRequests();
                     switchChildTab('history');
@@ -485,12 +505,12 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
 
                             <div>
                                 ${isWeb ? `
-                                    <button data-target="${escapeHtml(r.target_value)}" onclick="openApprovedWebsite(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
+                                    <button data-target="${escapeHtml(r.target_value)}" onclick="openWebsite(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
                                         <span>Mở trang web</span> ↗
                                     </button>
                                 ` : `
                                     <button data-target="${escapeHtml(r.target_value)}" onclick="startApprovedAppSession(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
-                                        Bắt đầu phiên ứng dụng
+                                        Kiểm tra quyền mở
                                     </button>
                                 `}
                             </div>
@@ -515,7 +535,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 window.dispatchEvent(new CustomEvent("mmt-web-connect", { detail: await response.json() }));
                 setTimeout(() => {
                     status.textContent = document.documentElement.dataset.mmtWebTracking === "connected"
-                        ? "Tiện ích MMT đang đo thời gian của tab web được phép trong hồ sơ trình duyệt này."
+                        ? "Tiện ích MMT đang lọc web và đếm giờ trong hồ sơ trình duyệt này."
                         : "Cài tiện ích MMT cho Chrome hoặc Edge để đếm thời gian và chặn trang 18+ trong trình duyệt.";
                     status.classList.remove("hidden");
                 }, 800);
@@ -525,7 +545,16 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             }
         }
 
-        async function openApprovedWebsite(target) {
+        async function openWebsite(target) {
+            let address;
+            try {
+                const value = target.trim();
+                address = new URL(value.includes("://") ? value : `https://${value}`);
+                if (!["http:", "https:"].includes(address.protocol) || address.username || address.password) throw new Error();
+            } catch {
+                showToast("Nhập địa chỉ web hợp lệ.", "rose");
+                return;
+            }
             // Open from the click before the permission request so popup blockers allow it.
             const tab = window.open("about:blank", "_blank");
             if (!tab) {
@@ -537,85 +566,25 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 const response = await fetch(`${API_BASE}/check-permission/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target, rule_type: "WEBSITE" })
+                    body: JSON.stringify({ target: address.hostname, rule_type: "WEBSITE" })
                 });
                 if (!response.ok) throw new Error("Không thể kiểm tra quyền truy cập.");
                 const result = await response.json();
-                if (!result.allowed) throw new Error(result.reason);
-                tab.location.replace(`https://${result.target}`);
+                if (!result.allowed) {
+                    const kind = result.requires_permission ? "ask" : result.is_expired
+                        ? (result.time_limit_minutes != null ? "expired" : "daily") : "";
+                    if (!kind) throw new Error(result.reason);
+                    const request = new URL("/child/", API_BASE);
+                    request.searchParams.set("web_request", kind);
+                    if (kind !== "daily") request.searchParams.set("host", result.target);
+                    tab.location.replace(request.href);
+                    return;
+                }
+                tab.location.replace(address.href);
             } catch (error) {
                 tab.close();
                 showToast(error.message, "rose");
             }
-        }
-
-        let activeUsageSession = null;
-        let activeSessionTimer = null;
-        let activeSessionSeconds = 0;
-
-        function startActiveUsageTracking(targetName, aiInfo) {
-            if (activeSessionTimer) clearInterval(activeSessionTimer);
-
-            activeUsageSession = targetName;
-            activeSessionSeconds = 0;
-
-            const banner = document.getElementById("active-tracking-banner");
-            if (banner) {
-                document.getElementById("active-tracking-title").textContent = targetName;
-                const catEl = document.getElementById("active-tracking-category");
-                if (catEl) {
-                    catEl.textContent = `${aiInfo.icon || '📱'} ${aiInfo.category || 'Chưa phân loại'}`;
-                    catEl.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${aiInfo.badge_color || 'bg-blue-100 text-blue-800 border-blue-300'}`;
-                }
-                document.getElementById("active-tracking-time").textContent = "00:00";
-                banner.classList.remove("hidden");
-            }
-
-            // Gửi telemetry 5 giây đầu tiên
-            sendAppTelemetry(targetName, 5);
-
-            // Bắt đầu đếm giây sử dụng cho phiên này
-            activeSessionTimer = setInterval(() => {
-                activeSessionSeconds++;
-                const mins = Math.floor(activeSessionSeconds / 60);
-                const secs = activeSessionSeconds % 60;
-                const formatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-                const timeEl = document.getElementById("active-tracking-time");
-                if (timeEl) timeEl.textContent = formatted;
-
-                // Mỗi 5 giây gửi telemetry để cộng dồn vào bảng thống kê
-                if (activeSessionSeconds % 5 === 0) {
-                    sendAppTelemetry(targetName, 5);
-                }
-            }, 1000);
-        }
-
-        async function sendAppTelemetry(appName, durationSec) {
-            try {
-                await fetch(`${API_BASE}/telemetry/`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        app_name: appName,
-                        duration_seconds: durationSec
-                    })
-                });
-                // Cập nhật lại số liệu bảng thống kê
-                fetchUsageStats();
-            } catch (e) {}
-        }
-
-        function stopActiveUsageTracking() {
-            if (!activeUsageSession) return;
-            if (activeSessionTimer) clearInterval(activeSessionTimer);
-            activeSessionTimer = null;
-            const banner = document.getElementById("active-tracking-banner");
-            if (banner) banner.classList.add("hidden");
-            const durationMins = Math.max(1, Math.round(activeSessionSeconds / 60));
-            showToast(`⏹️ Đã dừng phiên dùng "${activeUsageSession}". Đã ghi nhận ${durationMins} phút vào bảng thống kê!`, "emerald");
-            activeUsageSession = null;
-            fetchUsageStats();
-            fetchAllowedRules();
         }
 
         async function startApprovedAppSession(target) {
@@ -628,7 +597,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 if (!response.ok) throw new Error("Không thể kiểm tra quyền truy cập.");
                 const result = await response.json();
                 if (!result.allowed) throw new Error(result.reason);
-                startActiveUsageTracking(target, result.classification);
+                showToast(`Bạn có thể mở ${target} trên máy. Agent sẽ ghi nhận khi bạn sử dụng ứng dụng.`, "blue");
             } catch (error) {
                 showToast(error.message, "rose");
             }
@@ -701,8 +670,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     closeChildLoginModal();
                     showToast(`🎉 ${data.message}`, "emerald");
                     countdownSeconds = -1;
-                    lastServerDailyLimit = null;
                     await fetchActiveChild();
+                    openBrowserRequest();
                     initWebSocket();
                     connectWebTracking();
                     fetchAllowedRules();
@@ -720,22 +689,22 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         // --- BIỂU ĐỒ THÂN THIỆN CHO TRẺ ---
         let childChart = null;
 
-        function updateChildChart(learning, entertainment, social) {
+        function updateChildChart(learning, entertainment, social, unclassified) {
             const ctx = document.getElementById("childUsageChart");
             if (!ctx) return;
-            const total = (learning || 0) + (entertainment || 0) + (social || 0);
+            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0);
             const legendEl = document.getElementById("child-chart-legend");
             if (legendEl) {
                 if (total === 0) {
                     legendEl.textContent = "Chưa có hoạt động hôm nay";
                 } else {
-                    legendEl.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b>`;
+                    legendEl.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>`;
                 }
             }
 
-            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0];
-            const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6'];
-            const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội'];
+            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0, unclassified || 0];
+            const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6', '#64748b'];
+            const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội', 'Chưa phân loại'];
 
             if (childChart) {
                 childChart.data.datasets[0].data = dataValues;
@@ -841,24 +810,14 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             }
         }
 
-        function initCountdownTicker() {
-            if (isTickerRunning) return;
-            isTickerRunning = true;
-
-            setInterval(() => {
-                if (countdownSeconds > 0) {
-                    countdownSeconds--;
-                }
-                renderCountdownDisplay();
-            }, 1000);
-        }
-
         // --- TẢI DỮ LIỆU THỐNG KÊ SỬ DỤNG (USAGE STATS) ---
         async function fetchUsageStats() {
+            const requestId = ++usageRequestId;
             try {
                 const res = await fetch(`${API_BASE}/usage-stats/`);
                 if (!res.ok) return;
                 const data = await res.json();
+                if (requestId !== usageRequestId) return;
 
                 // Thống kê nhanh theo danh mục
                 const learnStr = data.learning_formatted || "0 phút";
@@ -876,7 +835,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 updateChildChart(
                     data.learning_seconds ?? (data.learning_minutes || 0) * 60,
                     data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
-                    data.social_seconds ?? (data.social_minutes || 0) * 60
+                    data.social_seconds ?? (data.social_minutes || 0) * 60,
+                    data.unclassified_seconds ?? 0
                 );
 
                 const totalMins = data.total_minutes || 0;
@@ -897,43 +857,25 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     extBadge.classList.add("hidden");
                 }
 
-                // Cập nhật thanh tiến độ theo hạn mức thực tế
-                const pct = dailyLimit > 0 ? Math.min(100, Math.round((totalMins / dailyLimit) * 100)) : 0;
-                document.getElementById("summary-percentage-text").textContent = `${pct}% (Đã dùng ${totalMins}/${dailyLimit} phút)`;
+                const totalSeconds = data.total_seconds ?? totalMins * 60;
+                const pct = dailyLimit > 0 ? Math.min(100, Math.round(totalSeconds / (dailyLimit * 60) * 100)) : 0;
+                document.getElementById("summary-percentage-text").textContent =
+                    `${pct}% · Đã dùng ${formatUsageSeconds(totalSeconds)} / ${dailyLimit} phút`;
 
                 const pBar = document.getElementById("summary-progress-bar");
                 pBar.style.width = `${pct}%`;
                 pBar.className = pct >= 90 ? "bg-rose-400 h-3 rounded-full transition-all duration-500" : (pct >= 60 ? "bg-amber-400 h-3 rounded-full transition-all duration-500" : "bg-emerald-400 h-3 rounded-full transition-all duration-500");
 
-                // ĐỒNG BỘ ĐỒNG HỒ ĐẾM NGƯỢC (CHẠY LIÊN TỤC VỀ 0, TUYỆT ĐỐI KHÔNG BỊ RESET MỖI PHÚT)
-                if (countdownSeconds < 0) {
-                    // Lần đầu tải trang: Khởi tạo chính xác số giây còn lại từ server
-                    countdownSeconds = Math.max(0, serverRemainingSec);
-                    lastServerDailyLimit = dailyLimit;
-                    renderCountdownDisplay();
-                } else if (lastServerDailyLimit !== null && dailyLimit > lastServerDailyLimit) {
-                    // Phụ huynh vừa duyệt thêm giờ: cộng dồn đúng số giây được duyệt vào đồng hồ hiện tại
-                    const addedSec = (dailyLimit - lastServerDailyLimit) * 60;
-                    countdownSeconds += addedSec;
-                    lastServerDailyLimit = dailyLimit;
-                    renderCountdownDisplay();
-                } else if (lastServerDailyLimit !== null && dailyLimit < lastServerDailyLimit) {
-                    // Phụ huynh giảm hạn mức: cập nhật lại theo server
-                    countdownSeconds = Math.max(0, serverRemainingSec);
-                    lastServerDailyLimit = dailyLimit;
-                    renderCountdownDisplay();
-                } else if (serverRemainingSec <= 0) {
-                    // Server xác nhận đã hết giờ hoàn toàn: kẹp về 00:00:00
-                    countdownSeconds = 0;
-                    renderCountdownDisplay();
-                } else {
-                    // Khi đang đếm bình thường: Giữ nguyên giây đang đếm, chỉ đồng bộ nếu lệch quá lớn (>45s) do máy ngủ
-                    const drift = Math.abs(countdownSeconds - serverRemainingSec);
-                    if (drift > 45 && serverRemainingSec < countdownSeconds) {
-                        countdownSeconds = serverRemainingSec;
-                        renderCountdownDisplay();
-                    }
+                countdownSeconds = Math.max(0, serverRemainingSec);
+                if (countdownSeconds > 300) {
+                    alert5Shown = false;
+                    document.getElementById("graceful-alert-5m").classList.add("hidden");
                 }
+                if (countdownSeconds > 900) {
+                    alert15Shown = false;
+                    document.getElementById("graceful-alert-15m").classList.add("hidden");
+                }
+                renderCountdownDisplay();
 
                 // Giờ giới nghiêm Bedtime
                 const bedtimeBanner = document.getElementById("bedtime-banner");
@@ -1051,15 +993,21 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         // --- KHỞI TẠO BAN ĐẦU ---
         window.addEventListener("DOMContentLoaded", async () => {
             updateSoundUI();
-            initCountdownTicker();
             showBackendAddress();
             await fetchActiveChild();
             initWebSocket();
             if (!currentChild) openChildLoginModal();
-            else connectWebTracking();
+            else {
+                openBrowserRequest();
+                connectWebTracking();
+            }
             fetchAllowedRules();
             fetchUsageStats();
             fetchChildRequests();
+
+            document.addEventListener("visibilitychange", () => {
+                if (!document.hidden) fetchUsageStats();
+            });
 
             // Định kỳ cập nhật dữ liệu ngầm mỗi 10 giây
             setInterval(() => {

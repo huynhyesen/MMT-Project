@@ -121,6 +121,8 @@ class DailyRollover(Base):
 class AlertLog(Base):
     """Nhật ký cảnh báo khi trẻ cố truy cập web lạ hoặc app bị cấm"""
     __tablename__ = "alert_logs"
+    device_id = Column(String, ForeignKey("devices.id"), nullable=True)
+    attempt_count = Column(Integer, default=1, server_default="1", nullable=False)
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     target_value = Column(String(255), nullable=False)
     reason = Column(String(255), nullable=False)

@@ -2,11 +2,11 @@
 window.addEventListener("mmt-web-connect", async event => {
     if (document.documentElement.dataset.mmtDashboard !== "child") return;
     try {
+        const { token } = event.detail;
         const response = await chrome.runtime.sendMessage({
             type: "connect",
             origin: location.origin,
-            token: event.detail.token,
-            targets: event.detail.targets
+            token
         });
         if (response?.connected) document.documentElement.dataset.mmtWebTracking = "connected";
         else delete document.documentElement.dataset.mmtWebTracking;

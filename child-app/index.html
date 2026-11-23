@@ -175,27 +175,7 @@
 
         <!-- BANNER THEO DÕI & ĐẾM GIỜ WEB/APP ĐANG SỬ DỤNG (AI GÁN NHÃN) -->
         <p id="web-tracking-status" class="hidden mb-4 text-xs text-slate-600" role="status"></p>
-        <div id="active-tracking-banner" class="hidden mb-6 p-4 bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border-2 border-emerald-400 rounded-2xl text-slate-800 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <span class="text-3xl p-2 bg-emerald-100 rounded-2xl text-emerald-700 animate-pulse">⏱️</span>
-                <div>
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-xs font-bold text-slate-700">Đang sử dụng:</span>
-                        <span id="active-tracking-title" class="text-sm font-black text-blue-700 font-mono">web.com</span>
-                        <span id="active-tracking-category" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border bg-emerald-100 text-emerald-800 border-emerald-300">📚 Học tập & Giáo dục</span>
-                        <span class="text-[10px] px-2 py-0.5 rounded-md bg-purple-100 text-purple-800 font-semibold border border-purple-200">🤖 AI đã gán nhãn</span>
-                    </div>
-                    <p class="text-xs text-slate-600 mt-1">
-                        Thời gian phiên này: <b id="active-tracking-time" class="font-mono text-emerald-800 font-extrabold text-sm">00:00</b> • Dữ liệu đang được tự động thống kê vào bảng bên dưới
-                    </p>
-                </div>
-            </div>
-            <div class="flex items-center gap-2">
-                <button onclick="stopActiveUsageTracking()" class="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1.5 whitespace-nowrap">
-                    <span>⏹️ Kết thúc phiên</span>
-                </button>
-            </div>
-        </div>
+
 
         <!-- CẢNH BÁO AI CONTENT FILTERING (BẢO VỆ NỘI DUNG THỜI GIAN THỰC) -->
         <div id="ai-content-alert" class="hidden mb-6 p-4 bg-purple-50 border-2 border-purple-400 rounded-2xl text-purple-900 shadow-md">
@@ -413,15 +393,22 @@
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-4 border-b border-slate-100 gap-3">
                     <div>
                         <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
-                            <span>🟢</span> Website & Phần Mềm Được Phép Sử Dụng
+                            <span>🌐</span> Mở web và xem quy tắc
                         </h3>
-                        <p class="text-xs text-slate-500 mt-0.5">Bấm <strong>Mở trang web ↗</strong> để truy cập ngay trên trình duyệt mà không bị chặn</p>
+                        <p class="text-xs text-slate-500 mt-0.5">Nhập địa chỉ để mở web. Khi trang cần xin phép, MMT sẽ mở biểu mẫu yêu cầu.</p>
                     </div>
                     <button onclick="fetchAllowedRules()" class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
                         🔄 Làm mới danh sách
                     </button>
                 </div>
 
+                <form onsubmit="event.preventDefault(); openWebsite(document.getElementById('browse-address').value)" class="flex flex-wrap items-end gap-2 mb-4">
+                    <div class="flex-1">
+                        <label for="browse-address" class="block text-xs font-semibold text-slate-700 mb-1">Địa chỉ web</label>
+                        <input id="browse-address" type="text" inputmode="url" required placeholder="VD wikipedia.org" class="w-full border border-slate-200 rounded-xl p-2.5 text-xs">
+                    </div>
+                    <button type="submit" class="px-4 py-2.5 rounded-xl text-xs font-semibold bg-blue-600 text-white">Mở web</button>
+                </form>
                 <div id="allowed-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div class="p-6 text-center text-slate-400 text-xs col-span-2">Đang tải danh sách được phép...</div>
                 </div>
@@ -587,7 +574,7 @@
                     </div>
 
                     <button onclick="submitUnlockRequest()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition flex items-center justify-center gap-1.5">
-                        <span>Gửi yêu cầu xin mở khóa</span> 📨
+                        <span id="unlock-submit-label">Gửi yêu cầu xin mở khóa</span> 📨
                     </button>
                 </div>
             </div>
