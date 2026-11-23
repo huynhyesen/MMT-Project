@@ -10,7 +10,9 @@ import urllib.request
 
 # Nạp các module thành phần cốt lõi của Agent
 from monitor import get_active_app_metadata
-from web_policy import ADULT_HOSTS, is_adult_host, normalize_host
+from web_policy import (
+    ADULT_BLOCK_DOMAINS, DEFAULT_BLOCKED_HOSTS, blocked_hosts_for_agent, is_adult_host, normalize_host,
+)
 from blocker import enforce_block_policy, kill_blocked_process, block_websites, unblock_websites, unblock_all_websites, lock_system, extract_domain
 from hwid import get_device_hwid, get_machine_info
 from cloud_sync import load_agent_config, device_headers, pair_with_backend, fetch_parent_config
@@ -124,10 +126,9 @@ BROWSER_PROCESSES = {
     "chrome", "chromium", "chromium-browser", "msedge", "microsoft-edge", "firefox",
     "brave", "brave-browser", "opera", "vivaldi", "coccoc", "browser",
 }
-ADULT_BLOCK_DOMAINS = {host for host in ADULT_HOSTS if "." in host}
-
-BLOCKED_KEYWORDS = ["discord", "youtube", "facebook", "tiktok", "roblox"] 
-BLOCKED_DOMAINS = ["youtube.com", "facebook.com", "discord.com", "tiktok.com"]
+DEFAULT_BLOCKED_KEYWORDS = {"discord", "youtube", "facebook", "tiktok", "roblox"}
+BLOCKED_KEYWORDS = DEFAULT_BLOCKED_KEYWORDS.copy()
+BLOCKED_DOMAINS = DEFAULT_BLOCKED_HOSTS | ADULT_BLOCK_DOMAINS
 
 # Danh sách ứng dụng/web được phụ huynh cho phép
 ALLOWED_TARGETS = set()
@@ -152,42 +153,45 @@ def forward_ws_alert(alert_data: dict):
 ai_guard = AIContentGuard(backend_url=BACKEND_HTTP, ws_callback=forward_ws_alert)
 
 def sync_allowed_rules():
-    """Tải danh sách các quy tắc ALLOW và BLOCK từ server về Agent."""
-    global ALLOWED_TARGETS, BLOCKED_DOMAINS, BLOCKED_KEYWORDS, BACKEND_HTTP
-    urls_to_try = [f"{BACKEND_HTTP}/rules/"]
+    """Apply the latest complete rule set and keep the current policy if the server is offline."""
+    global ALLOWED_TARGETS, BLOCKED_DOMAINS, BLOCKED_KEYWORDS
+    try:
+        req = urllib.request.Request(f"{BACKEND_HTTP}/rules/", headers=device_headers(DEVICE_CONFIG))
+        with urllib.request.urlopen(req, timeout=2) as response:
+            rules = json.load(response)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(rules, list):
+        return False
 
-    for u in urls_to_try:
-        try:
-            req = urllib.request.Request(u, headers=device_headers(DEVICE_CONFIG))
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                rules = json.loads(resp.read().decode())
-                base_u = u.replace("/rules/", "")
-                BACKEND_HTTP = base_u
-                ai_guard.backend_url = BACKEND_HTTP
-                for r in rules:
-                    val = extract_domain(r.get("target_value", ""))
-                    if not val:
-                        continue
-                    val_lower = val.lower()
-                    if r.get("action") == "ALLOW" and not is_adult_host(normalize_host(val_lower)):
-                        ALLOWED_TARGETS.add(val_lower)
-                        # Gỡ khỏi danh sách cấm
-                        for kw in list(BLOCKED_KEYWORDS):
-                            if kw in val_lower or val_lower in kw:
-                                BLOCKED_KEYWORDS.remove(kw)
-                        unblock_websites([val])
-                    elif r.get("action") == "BLOCK":
-                        if "." in val_lower:
-                            if val_lower not in BLOCKED_DOMAINS:
-                                BLOCKED_DOMAINS.append(val_lower)
-                            block_websites([val])
-                        else:
-                            if val_lower not in BLOCKED_KEYWORDS:
-                                BLOCKED_KEYWORDS.append(val_lower)
-                print(f"🔄 [AGENT] Đã đồng bộ {len(ALLOWED_TARGETS)} mục được phép: {ALLOWED_TARGETS}")
-                return
-        except Exception:
-            continue
+    blocked_domains = blocked_hosts_for_agent(rules)
+    allowed_targets = set()
+    allowed_domains = set()
+    blocked_apps = set()
+    for rule in rules:
+        if rule["rule_type"] == "WEBSITE":
+            host = normalize_host(rule["target_value"])
+            if rule["action"] == "ALLOW" and host and not is_adult_host(host):
+                allowed_domains.add(host)
+                allowed_targets.add(host)
+        elif target := extract_domain(rule["target_value"]):
+            if rule["action"] == "ALLOW":
+                allowed_targets.add(target)
+            elif rule["action"] == "BLOCK":
+                blocked_apps.add(target)
+
+    default_keywords = {
+        keyword for keyword in DEFAULT_BLOCKED_KEYWORDS
+        if not any(keyword in target for target in allowed_targets)
+    }
+    unblock_websites((BLOCKED_DOMAINS | allowed_domains) - blocked_domains)
+    block_websites(blocked_domains)
+    ALLOWED_TARGETS = allowed_targets
+    BLOCKED_DOMAINS = blocked_domains
+    BLOCKED_KEYWORDS = default_keywords | blocked_apps
+    print(f"🔄 [AGENT] Đã đồng bộ {len(ALLOWED_TARGETS)} mục được phép.")
+    return True
+
 
 def send_telemetry(app_name: str, duration_sec: int = 10):
     """Gửi dữ liệu thời lượng hoạt động của ứng dụng về Backend."""
@@ -417,8 +421,8 @@ async def main():
         if p_cfg:
             print(f"📥 [ĐỒNG BỘ]: Hạn mức: {p_cfg.get('daily_limit_minutes')}p | Giới nghiêm: {p_cfg.get('bedtime')}")
 
-        sync_allowed_rules()
-        block_websites(set(BLOCKED_DOMAINS) | ADULT_BLOCK_DOMAINS)
+        if not sync_allowed_rules():
+            block_websites(BLOCKED_DOMAINS)
         await asyncio.gather(
             monitor_apps_task(),
             listen_to_server(),

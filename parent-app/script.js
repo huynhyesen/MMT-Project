@@ -10,6 +10,8 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         let ws = null;
         let cachedUsageItems = [];
+        let currentUsageTag = "ALL";
+        let usageRequestId = 0;
         let currentActiveTab = 'overview';
 
         // --- HỆ THỐNG ÂM THANH THÔNG BÁO "TING" & DESKTOP NOTIFICATION ---
@@ -147,6 +149,7 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             if (window.innerWidth < 768 && mobileNav && !mobileNav.classList.contains('hidden')) {
                 mobileNav.classList.add('hidden');
             }
+            refreshVisibleUsageStats();
         }
 
         function toggleMobileMenu() {
@@ -405,20 +408,20 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         let parentChart = null;
 
-        function updateParentChart(learnM, entM, socM) {
+        function updateParentChart(learning, entertainment, social) {
             const ctx = document.getElementById("parentUsageChart");
             if (!ctx) return;
-            const total = (learnM || 0) + (entM || 0) + (socM || 0);
+            const total = (learning || 0) + (entertainment || 0) + (social || 0);
             const legendText = document.getElementById("chart-legend-text");
             if (legendText) {
                 if (total === 0) {
                     legendText.innerText = "Chưa có hoạt động hôm nay";
                 } else {
-                    legendText.innerHTML = `📚 <b>${learnM}p</b> • 🎮 <b>${entM}p</b> • 💬 <b>${socM}p</b>`;
+                    legendText.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b>`;
                 }
             }
 
-            const dataValues = total === 0 ? [1] : [learnM || 0, entM || 0, socM || 0];
+            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0];
             const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6'];
             const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội'];
 
@@ -449,8 +452,8 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        if (total === 0) return "Chưa có dữ liệu";
-                                        return ` ${context.label}: ${context.raw} phút`;
+                                        if (context.label === "Chưa dùng") return "Chưa có dữ liệu";
+                                        return ` ${context.label}: ${formatUsageSeconds(context.raw)}`;
                                     }
                                 }
                             }
@@ -460,11 +463,21 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             }
         }
 
+        function refreshVisibleUsageStats() {
+            if (!document.hidden && ["overview", "stats"].includes(currentActiveTab)) {
+                fetchUsageStats();
+            }
+        }
+
         async function fetchUsageStats() {
             const listEl = document.getElementById("usage-list");
+            const requestId = ++usageRequestId;
+            const childId = selectedChildId;
             try {
-                const response = await consoleFetch(`${API_BASE}/usage-stats/${selectedChildId ? "?child_id=" + selectedChildId : ""}`);
+                const response = await consoleFetch(`${API_BASE}/usage-stats/${childId ? "?child_id=" + childId : ""}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
+                if (requestId !== usageRequestId || childId !== selectedChildId) return;
 
                 document.getElementById("stat-total-time").innerText = data.total_formatted;
                 document.getElementById("stat-learning-time").innerText = data.learning_formatted || "0 phút";
@@ -473,11 +486,16 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                 const overviewUsed = document.getElementById("overview-used-time");
                 if (overviewUsed) overviewUsed.textContent = data.total_formatted;
 
-                updateParentChart(data.learning_minutes, data.entertainment_minutes, data.social_minutes);
+                updateParentChart(
+                    data.learning_seconds ?? (data.learning_minutes || 0) * 60,
+                    data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
+                    data.social_seconds ?? (data.social_minutes || 0) * 60
+                );
 
                 cachedUsageItems = data.items || [];
-                renderUsageList(cachedUsageItems);
+                renderFilteredUsage();
             } catch (error) {
+                if (requestId !== usageRequestId || childId !== selectedChildId) return;
                 if (listEl) listEl.innerHTML = `<p class="text-rose-500 text-xs py-2 text-center">Lỗi khi tải báo cáo: ${escapeHtml(error.message)}</p>`;
             }
         }
@@ -488,12 +506,15 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             });
             btn.className = "usage-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-emerald-600 text-white";
 
-            if (tag === "ALL") {
-                renderUsageList(cachedUsageItems);
-            } else {
-                const filtered = cachedUsageItems.filter(item => item.tag === tag);
-                renderUsageList(filtered);
-            }
+            currentUsageTag = tag;
+            renderFilteredUsage();
+        }
+
+        function renderFilteredUsage() {
+            const items = currentUsageTag === "ALL"
+                ? cachedUsageItems
+                : cachedUsageItems.filter(item => item.tag === currentUsageTag);
+            renderUsageList(items);
         }
 
         function renderUsageList(items) {
@@ -613,6 +634,10 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                     const data = await res.json();
                     document.getElementById("curfew-bedtime-input").value = data.bedtime;
                     document.getElementById("curfew-wakeup-input").value = data.wakeup_time;
+                    document.getElementById("curfew-timezone-input").value =
+                        data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+                    document.getElementById("curfew-server-time").textContent =
+                        `Giờ app kiểm tra lúc tải: ${data.current_time} (${data.timezone || "giờ máy chủ"})`;
                     
                     const badge = document.getElementById("curfew-status-badge");
                     const overviewCurfewText = document.getElementById("overview-curfew-text");
@@ -625,16 +650,16 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                     if (data.is_within_curfew) {
                         if (badge) {
                             badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse";
-                            badge.innerHTML = "🌙 Máy con đang bị vô hiệu hóa";
+                            badge.textContent = "🌙 Đang trong giờ giới nghiêm";
                         }
                         if (overviewCurfewStatus) {
                             overviewCurfewStatus.className = "text-[10px] text-rose-600 font-bold animate-pulse";
-                            overviewCurfewStatus.textContent = "🌙 Đang bị khóa";
+                            overviewCurfewStatus.textContent = "🌙 Đang giới nghiêm";
                         }
                     } else {
                         if (badge) {
                             badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300";
-                            badge.innerHTML = "🟢 Máy con đang mở";
+                            badge.textContent = "🟢 Ngoài giờ giới nghiêm";
                         }
                         if (overviewCurfewStatus) {
                             overviewCurfewStatus.className = "text-[10px] text-emerald-600 font-semibold";
@@ -651,20 +676,30 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
         }
 
         async function saveCurfewSettings() {
-            const bedtime = document.getElementById("curfew-bedtime-input").value || "22:00";
-            const wakeup = document.getElementById("curfew-wakeup-input").value || "06:00";
+            const bedtime = document.getElementById("curfew-bedtime-input").value;
+            const wakeup = document.getElementById("curfew-wakeup-input").value;
+            const timezone = document.getElementById("curfew-timezone-input").value.trim();
+            if (!bedtime || !wakeup || !timezone) {
+                showToast("Nhập giờ bắt đầu, giờ kết thúc và múi giờ.", "danger");
+                return;
+            }
             try {
                 const res = await consoleFetch(`${API_BASE}/curfew/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ bedtime: bedtime, wakeup_time: wakeup })
+                    body: JSON.stringify({ bedtime, wakeup_time: wakeup, timezone })
                 });
-                if (res.ok) {
-                    showToast(`🌙 Đã cập nhật giờ vô hiệu hóa: ${bedtime} (Tối) → ${wakeup} (Sáng)!`, "success");
-                    fetchCurfew();
+                if (!res.ok) {
+                    const data = await res.json();
+                    const message = typeof data.detail === "string"
+                        ? data.detail
+                        : "Kiểm tra giờ và múi giờ, ví dụ Asia/Ho_Chi_Minh.";
+                    throw new Error(message);
                 }
-            } catch (e) {
-                alert("Lỗi lưu khung giờ: " + e.message);
+                showToast(`Đã lưu giờ giới nghiêm ${bedtime}–${wakeup} (${timezone}).`, "success");
+                await fetchCurfew();
+            } catch (error) {
+                showToast("Không lưu được giờ giới nghiêm. " + error.message, "danger");
             }
         }
 
@@ -826,7 +861,6 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             selectedChildId = childId;
             await fetchChildren();
             switchParentTab("stats");
-            fetchUsageStats();
         }
 
         async function deleteChild(childId) {
@@ -1111,8 +1145,9 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             fetchRules();
             fetchCurfew();
             await fetchChildren();
-            fetchUsageStats();
             fetchAlerts();
 
             switchParentTab('overview');
+            document.addEventListener("visibilitychange", refreshVisibleUsageStats);
+            setInterval(refreshVisibleUsageStats, 10000);
         });

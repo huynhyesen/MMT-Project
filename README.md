@@ -63,9 +63,17 @@ Cài tiện ích trong hồ sơ Chrome hoặc Edge mà trẻ sử dụng trên m
 2. Bật **Chế độ dành cho nhà phát triển**, chọn **Tải tiện ích đã giải nén** (*Load unpacked*) và chọn thư mục `browser-extension` trong dự án.
 3. Mở lại **Góc Của Con** từ Agent và đăng nhập PIN. Chờ dòng **Tiện ích MMT đang đo thời gian của tab web được phép**. Sau khi khởi động lại trình duyệt, mở lại dashboard để kết nối phiên theo dõi.
 
-Trẻ có thể xin mở web trong **Xin phép**. Sau khi phụ huynh duyệt, trẻ mở trang từ **Được phép** hoặc nhập địa chỉ trực tiếp. Tiện ích tính số giây cho tên miền đã được duyệt khi tab được chọn, cửa sổ trình duyệt có tiêu điểm và máy chưa chuyển sang trạng thái rảnh. Số liệu được gửi khi chuyển tab và định kỳ khoảng 30 giây. Dữ liệu đếm giờ web gửi về Backend gồm tên miền và số giây.
+Trẻ có thể xin mở web trong **Xin phép**. Sau khi phụ huynh duyệt, trẻ mở trang từ **Được phép** hoặc nhập địa chỉ trực tiếp. Tiện ích tính số giây cho tên miền đã được duyệt khi tab được chọn, cửa sổ trình duyệt có tiêu điểm và có hoạt động. Video có tiếng trong tab đang hiển thị vẫn được tính khi trẻ xem mà không chạm chuột hay bàn phím. Số liệu được gửi khi chuyển tab và định kỳ khoảng 30 giây. Trang **Thống kê** trên dashboard phụ huynh tự làm mới khi đang hiển thị. Dữ liệu đếm giờ web gửi về Backend gồm tên miền và số giây.
+
+Nếu một trang đã duyệt chưa hiện trong thống kê, kiểm tra tiện ích đã báo kết nối, tab web nằm trong cùng hồ sơ Chrome/Edge và báo cáo đang chọn đúng trẻ. Nếu trang chuyển sang tên miền khác với tên miền đã duyệt, kiểm tra địa chỉ cuối cùng trên thanh địa chỉ.
 
 Tiện ích chặn các tên miền và mẫu tên miền 18+ trong danh sách lọc, kể cả khi nhập địa chỉ trực tiếp. Agent bổ sung lớp chặn các tên miền phổ biến qua file `hosts` khi chạy với quyền quản trị. Phạm vi lọc phụ thuộc vào danh sách tên miền và trình duyệt đã bật tiện ích. Nội dung 18+ bên trong một trang thông thường có thể lọt qua.
+
+### 4. Đặt giờ giới nghiêm
+
+Trong dashboard phụ huynh, mở **Giờ giới nghiêm**, nhập giờ bắt đầu, giờ kết thúc và múi giờ rồi bấm lưu. Ví dụ tại Việt Nam, chọn `Asia/Ho_Chi_Minh`. Nhập `00:55` cho 12 giờ 55 phút đêm. Khung `00:55–06:00` bắt đầu lúc 00:55 và kết thúc đúng lúc 06:00. Dashboard hiển thị giờ mà app dùng để kiểm tra.
+
+Sau khi cập nhật từ phiên bản cũ, hãy lưu lại khung giờ một lần để ghi nhận múi giờ. Cấu hình cũ chưa có múi giờ sẽ tiếp tục dùng đồng hồ của máy chủ cho đến khi lưu.
 
 ## Cập nhật và khôi phục
 
@@ -91,3 +99,5 @@ Trên Windows, có thể dùng `python -m venv .venv` rồi thay `python` trong 
 Để chạy Backend trực tiếp, có thể dùng `python -m backend.serve`. Lệnh hỏi mật khẩu nếu `MMT_PARENT_PASSWORD` chưa được đặt. Nếu gọi Uvicorn trực tiếp, đặt biến này trước khi chạy. Dùng HTTPS khi triển khai bên ngoài mạng LAN tin cậy để bảo vệ thông tin đăng nhập và ghép nối.
 
 Khi thêm lớp Tailwind vào dashboard, dùng Tailwind CSS 3.4.19 để tạo lại `backend/app/assets/dashboard.css` từ HTML và JavaScript của hai dashboard, `backend/app/main.py` và `backend/app/services/classification.py`.
+
+Chạy kiểm thử của tiện ích với Node.js 20 trở lên bằng lệnh `node --test browser-extension/tests/worker.test.cjs`.

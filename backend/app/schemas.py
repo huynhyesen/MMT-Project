@@ -1,6 +1,10 @@
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Literal, Optional, List
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Annotated, Literal, Optional, List
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+CurfewTime = Annotated[str, Field(pattern=r"^(?:[01]?[0-9]|2[0-3]):[0-5][0-9]$")]
 
 class TelemetryCreate(BaseModel):
     app_name: str
@@ -59,12 +63,16 @@ class UsageStatsResponse(BaseModel): #default
     total_minutes: int
     total_formatted: str
     learning_minutes: int
+    learning_seconds: int = 0
     learning_formatted: str
     entertainment_minutes: int
+    entertainment_seconds: int = 0
     entertainment_formatted: str
     social_minutes: int
+    social_seconds: int = 0
     social_formatted: str
     utilities_minutes: int
+    utilities_seconds: int = 0
     utilities_formatted: str
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
@@ -107,8 +115,8 @@ class AppWebRuleResponse(BaseModel):
 class OnboardingSetupRequest(BaseModel):
     learning_limit_minutes: int = 180
     entertainment_limit_minutes: int = 45
-    bedtime: str = "22:00"
-    wakeup_time: str = "06:00"
+    bedtime: CurfewTime = "22:00"
+    wakeup_time: CurfewTime = "06:00"
     allowed_sites: List[str] = ["khanacademy.org", "wikipedia.org", "duolingo.com"]
     blocked_sites: List[str] = ["youtube.com", "facebook.com", "discord.com", "tiktok.com", "roblox"]
 
@@ -157,12 +165,26 @@ class AlertLogResponse(BaseModel):
 
 # Schemas cho Cập nhật Khung giờ giới nghiêm
 class CurfewUpdateRequest(BaseModel):
-    bedtime: str = "22:00"
-    wakeup_time: str = "06:00"
+    bedtime: CurfewTime = "22:00"
+    wakeup_time: CurfewTime = "06:00"
+    timezone: str | None = Field(default=None, max_length=100)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value):
+        if value is not None:
+            try:
+                ZoneInfo(value)
+            except (ZoneInfoNotFoundError, ValueError):
+                raise ValueError("Múi giờ không hợp lệ.") from None
+        return value
+
 
 class CurfewResponse(BaseModel):
     bedtime: str
     wakeup_time: str
+    timezone: str | None
+    current_time: str
     is_within_curfew: bool
 
 # ==========================================

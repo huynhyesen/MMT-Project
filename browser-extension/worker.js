@@ -18,16 +18,43 @@ function hostname(url) {
     }
 }
 
-async function activeHost(targets) {
-    if (await chrome.idle.queryState(60) !== "active") return "";
+async function activeHost() {
+    const activity = await chrome.idle.queryState(60);
+    if (activity === "locked") return "";
     const window = await chrome.windows.getLastFocused();
     if (!window.focused) return "";
     const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
-    const host = hostname(tab?.url);
-    return targets.includes(host) ? host : "";
+    // A foreground tab can be in use while a video plays without mouse or keyboard input.
+    if (activity === "idle" && (!tab?.audible || tab.mutedInfo?.muted)) return "";
+    return hostname(tab?.url);
 }
 
-async function track(send = false) {
+function backendRequest(tracking, path, options = {}) {
+    return fetch(tracking.origin + path, {
+        credentials: "omit",
+        redirect: "error",
+        signal: AbortSignal.timeout(5000),
+        ...options,
+        headers: {
+            ...options.headers,
+            "Authorization": "Bearer " + tracking.token
+        }
+    });
+}
+
+async function refreshTargets(tracking) {
+    try {
+        const response = await backendRequest(tracking, "/web-tracking/policy");
+        if (response.ok) {
+            const { targets } = await response.json();
+            if (Array.isArray(targets)) tracking.targets = targets;
+        }
+    } catch {
+        // Keep the known policy during a connection interruption.
+    }
+}
+
+async function track(send = false, refreshPolicy = false) {
     const { tracking } = await chrome.storage.session.get("tracking");
     if (!tracking) return;
 
@@ -36,8 +63,14 @@ async function track(send = false) {
         const elapsed = Math.min(MAX_SAMPLE_MS, Math.max(0, now - tracking.since));
         tracking.pending[tracking.active] = (tracking.pending[tracking.active] || 0) + elapsed;
     }
+    const observedHost = await activeHost();
+    if (refreshPolicy || (observedHost && observedHost !== tracking.observedHost &&
+        !tracking.targets.includes(observedHost) && observedHost !== hostname(tracking.origin))) {
+        await refreshTargets(tracking);
+    }
     tracking.since = now;
-    tracking.active = await activeHost(tracking.targets);
+    tracking.observedHost = observedHost;
+    tracking.active = tracking.targets.includes(observedHost) ? observedHost : "";
     await chrome.storage.session.set({ tracking });
     if (!send) return;
 
@@ -45,16 +78,10 @@ async function track(send = false) {
         const duration_seconds = Math.min(MAX_BATCH_SECONDS, Math.floor(milliseconds / 1000));
         if (!duration_seconds) continue;
         try {
-            const response = await fetch(tracking.origin + "/web-tracking/usage", {
+            const response = await backendRequest(tracking, "/web-tracking/usage", {
                 method: "POST",
-                credentials: "omit",
-                redirect: "error",
-                headers: {
-                    "Authorization": "Bearer " + tracking.token,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ host, duration_seconds }),
-                signal: AbortSignal.timeout(5000)
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ host, duration_seconds })
             });
 
             if (response.status === 401) {
@@ -89,11 +116,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         const { tracking } = await chrome.storage.session.get("tracking");
         const targets = [...new Set(message.targets)].filter(host =>
             typeof host === "string" && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host));
+        const observedHost = await activeHost();
         await chrome.storage.session.set({ tracking: {
             origin: message.origin,
             token: message.token,
             targets,
-            active: await activeHost(targets),
+            observedHost,
+            active: targets.includes(observedHost) ? observedHost : "",
             since: Date.now(),
             pending: sameProfile ? tracking.pending : {}
         } });
@@ -105,12 +134,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 
 chrome.tabs.onActivated.addListener(() => schedule(() => track(true)));
 chrome.tabs.onUpdated.addListener((_tab, changes) => {
-    if (changes.url) schedule(() => track());
+    if (changes.url || changes.audible !== undefined) schedule(() => track(true));
 });
-chrome.tabs.onRemoved.addListener(() => schedule(() => track()));
+chrome.tabs.onRemoved.addListener(() => schedule(() => track(true)));
 chrome.windows.onFocusChanged.addListener(() => schedule(() => track(true)));
 chrome.idle.onStateChanged.addListener(() => schedule(() => track(true)));
 chrome.idle.setDetectionInterval(60);
 chrome.alarms.onAlarm.addListener(alarm => {
-    if (alarm.name === ALARM) schedule(() => track(true));
+    if (alarm.name === ALARM) schedule(() => track(true, true));
 });

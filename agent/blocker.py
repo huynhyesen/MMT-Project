@@ -147,8 +147,9 @@ def unblock_websites(website_list: list):
         modified = False
         new_lines = []
         for line in lines:
-            parts = [p.lower() for p in line.strip().split()]
-            if any(d in parts for d in clean_domains):
+            hosts, _, comment = line.partition("#")
+            parts = hosts.lower().split()
+            if f"#{comment}".strip() == MMT_TAG and any(d in parts[1:] for d in clean_domains):
                 modified = True
                 continue
             new_lines.append(line)

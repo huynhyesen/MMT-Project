@@ -56,6 +56,15 @@ class TimeLimit(Base):
     bedtime = Column(String(10), default="22:00") # Khung giờ bắt đầu giới nghiêm
     wakeup_time = Column(String(10), default="06:00") # Khung giờ mở khóa lại buổi sáng
 
+class CurfewSchedule(Base):
+    __tablename__ = "curfew_schedule"
+
+    id = Column(Integer, primary_key=True)
+    bedtime = Column(String(5), nullable=False)
+    wakeup_time = Column(String(5), nullable=False)
+    timezone = Column(String(100), nullable=True)
+
+
 class AppWebRule(Base):
     __tablename__ = "app_web_rules"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))

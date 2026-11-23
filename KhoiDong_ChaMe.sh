@@ -39,7 +39,7 @@ if [ ! -x "$VENV_PYTHON" ]; then
 fi
 
 # 3. Kiểm tra và cài đặt thư viện (tự động lọc bỏ pywin32 trên Linux)
-if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, sqlalchemy, pydantic, websockets" >/dev/null 2>&1; then
+if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, sqlalchemy, pydantic, websockets, tzdata" >/dev/null 2>&1; then
     echo "[*] Đang cài đặt thư viện cần thiết cho Server..."
     "$VENV_PIP" install --upgrade pip >/dev/null 2>&1
     if [ -f "requirements.txt" ]; then
@@ -47,7 +47,7 @@ if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, sqlalchemy, pydantic, websocket
         "$VENV_PIP" install -r .req_server_linux.tmp
         rm -f .req_server_linux.tmp
     else
-        "$VENV_PIP" install "fastapi" "uvicorn[standard]" "sqlalchemy" "pydantic" "websockets"
+        "$VENV_PIP" install "fastapi" "uvicorn[standard]" "sqlalchemy" "pydantic" "websockets" "tzdata"
     fi
 
     if [ $? -ne 0 ]; then

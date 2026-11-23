@@ -15,6 +15,14 @@ def format_duration(minutes: int) -> str:
     return f"{hours} giờ"
 
 
+def format_usage_duration(seconds: int) -> str:
+    minutes, remainder = divmod(seconds, 60)
+    if minutes == 0 and remainder:
+        return f"{remainder} giây"
+    formatted = format_duration(minutes)
+    return f"{formatted} {remainder} giây" if remainder else formatted
+
+
 def format_remaining(
     limit_mins: int,
     used_mins: int

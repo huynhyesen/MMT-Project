@@ -23,11 +23,11 @@ from .services.classification import (
 )
 
 from .services.formatters import (
-    format_duration,
     format_remaining,
-    is_within_curfew
+    format_usage_duration,
 )
 
+from .services.curfew import current_curfew, store_curfew
 from .services.realtime import manager
 from agent.web_policy import is_adult_host, normalize_host
 
@@ -250,7 +250,7 @@ async def authorize_request(request: Request, call_next):
     method = request.method
     if method == "OPTIONS":
         return await call_next(request)
-    if (method, path) == ("POST", "/web-tracking/usage"):
+    if (method, path) in {("GET", "/web-tracking/policy"), ("POST", "/web-tracking/usage")}:
         request.state.device = security.resolve_device(request, web_tracking=True)
         if request.state.device:
             return await call_next(request)
@@ -484,6 +484,7 @@ def get_onboarding_config(db: Session = Depends(database.get_db)):
     learn_limit = db.query(models.TimeLimit).filter(models.TimeLimit.category == "LEARNING").first()
     ent_limit = db.query(models.TimeLimit).filter(models.TimeLimit.category == "ENTERTAINMENT").first()
     
+    curfew = current_curfew(db)
     rules = db.query(models.AppWebRule).all()
     allowed = [r.target_value for r in rules if r.action == "ALLOW"]
     blocked = [r.target_value for r in rules if r.action == "BLOCK"]
@@ -491,8 +492,8 @@ def get_onboarding_config(db: Session = Depends(database.get_db)):
     return {
         "learning_limit_minutes": learn_limit.daily_limit_minutes if learn_limit else 180,
         "entertainment_limit_minutes": ent_limit.daily_limit_minutes if ent_limit else 45,
-        "bedtime": learn_limit.bedtime if learn_limit else "22:00",
-        "wakeup_time": learn_limit.wakeup_time if learn_limit and learn_limit.wakeup_time else "06:00",
+        "bedtime": curfew.bedtime,
+        "wakeup_time": curfew.wakeup_time,
         "allowed_sites": allowed or [],
         "blocked_sites": blocked or ["youtube.com", "facebook.com", "discord.com", "tiktok.com"]
     }
@@ -543,6 +544,7 @@ async def save_onboarding_setup(config: schemas.OnboardingSetupRequest, db: Sess
             r_type = "WEBSITE" if "." in clean else "APP"
             db.add(models.AppWebRule(rule_type=r_type, target_value=clean, action="BLOCK", time_limit_minutes=config.entertainment_limit_minutes, used_minutes=0))
 
+    store_curfew(db, config.bedtime, config.wakeup_time)
     db.commit()
 
     await manager.broadcast_json({
@@ -577,15 +579,26 @@ def effective_web_rules(db, device):
     return rules
 
 
-@app.get("/web-tracking/session")
-def web_tracking_session(request: Request, db: Session = Depends(database.get_db)):
-    device = client_device(request)
-    targets = [
+def web_tracking_targets(db, device):
+    return [
         host for host, rule in effective_web_rules(db, device).items()
         if rule.action == "ALLOW" and not is_adult_host(host)
     ]
+
+
+@app.get("/web-tracking/session")
+def web_tracking_session(request: Request, db: Session = Depends(database.get_db)):
+    device = client_device(request)
     return JSONResponse(
-        {"token": security.web_tracking_token(device), "targets": targets},
+        {"token": security.web_tracking_token(device), "targets": web_tracking_targets(db, device)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/web-tracking/policy")
+def web_tracking_policy(request: Request, db: Session = Depends(database.get_db)):
+    return JSONResponse(
+        {"targets": web_tracking_targets(db, client_device(request))},
         headers={"Cache-Control": "no-store"},
     )
 
@@ -654,15 +667,17 @@ def check_permission(payload: schemas.CheckPermissionRequest, request: Request, 
                 "reason": "Trang web thuộc nhóm nội dung 18+ bị chặn."}
 
     # 1. Kiểm tra giờ giới nghiêm (Bedtime Mode)
-    curfew_record = db.query(models.TimeLimit).first()
-    b_hour = curfew_record.bedtime if curfew_record and curfew_record.bedtime else "22:00"
-    w_hour = curfew_record.wakeup_time if curfew_record and curfew_record.wakeup_time else "06:00"
-    if is_within_curfew(b_hour, w_hour):
+    curfew = current_curfew(db)
+    if curfew.is_within_curfew:
+        timezone_label = curfew.timezone or "giờ máy chủ"
         return {
             "allowed": False,
             "target": target,
             "classification": classification,
-            "reason": f"Đang trong giờ giới nghiêm ({b_hour} - {w_hour}). Không thể truy cập.",
+            "reason": (
+                f"Đang trong giờ giới nghiêm ({curfew.bedtime}–{curfew.wakeup_time}). "
+                f"Giờ app đang dùng là {curfew.current_time} ({timezone_label})."
+            ),
             "is_curfew": True
         }
 
@@ -1136,12 +1151,7 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         device = db.query(models.Device).filter_by(child_profile_id=child_id).first()
     if device:
         selected_child = db.get(models.ChildProfile, device.child_profile_id)
-    # Kiểm tra giờ giới nghiêm (Bedtime Mode: Vô hiệu hóa sau bedtime_str đến wakeup_str sáng)
-    time_limit_record = db.query(models.TimeLimit).first()
-    bedtime_str = time_limit_record.bedtime if time_limit_record and time_limit_record.bedtime else "22:00"
-    wakeup_str = time_limit_record.wakeup_time if time_limit_record and time_limit_record.wakeup_time else "06:00"
-    
-    is_bedtime = is_within_curfew(bedtime_str, wakeup_str)
+    curfew = current_curfew(db)
 
     # Chỉ thống kê dữ liệu thực tế từ telemetry (AI gán nhãn phân loại)
     real_usage_sec_map = {}
@@ -1165,23 +1175,16 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
     total_actual_sec = sum(real_usage_sec_map.values()) or 0
     total_minutes = total_actual_sec // 60
 
-    real_usage_map = {}
-    for clean_n, sec in real_usage_sec_map.items():
-        mins = sec // 60 if sec >= 60 else (1 if sec > 0 else 0)
-        real_usage_map[clean_n] = mins
-
     rules = device_rules(db, device).all()
     rule_limits = {}
     for r in rules:
         rule_limits.setdefault(r.target_value.lower(), r.time_limit_minutes)
 
     items: List[schemas.UsageItemResponse] = []
-    learning_minutes = 0
-    entertainment_minutes = 0
-    social_minutes = 0
-    utilities_minutes = 0
+    category_seconds = {"LEARNING": 0, "ENTERTAINMENT": 0, "SOCIAL": 0, "UTILITY": 0}
 
-    for name, minutes in sorted(real_usage_map.items(), key=lambda x: x[1], reverse=True):
+    for name, seconds in sorted(real_usage_sec_map.items(), key=lambda item: item[1], reverse=True):
+        minutes = seconds // 60
         info = classify_item(name)
         cat = info["category"]
         tag = info["tag"]
@@ -1195,22 +1198,14 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
 
         rem_m, rem_str, is_exp = format_remaining(limit_m, minutes)
 
-        if tag == "LEARNING":
-            learning_minutes += minutes
-        elif tag == "ENTERTAINMENT":
-            entertainment_minutes += minutes
-        elif tag == "SOCIAL":
-            social_minutes += minutes
-        else:
-            utilities_minutes += minutes
-
-        seconds = real_usage_sec_map[name]
+        category = tag if tag in category_seconds else "UTILITY"
+        category_seconds[category] += seconds
         pct = round(seconds / total_actual_sec * 100, 1) if total_actual_sec else 0
 
         items.append(schemas.UsageItemResponse(
             app_name=name,
             duration_minutes=minutes,
-            duration_formatted=f"{seconds} giây" if seconds < 60 else format_duration(minutes),
+            duration_formatted=format_usage_duration(seconds),
             category=cat,
             tag=tag,
             icon=info["icon"],
@@ -1236,18 +1231,22 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
 
     return schemas.UsageStatsResponse(
         total_minutes=total_minutes,
-        total_formatted=f"{total_actual_sec} giây" if 0 < total_actual_sec < 60 else format_duration(total_minutes),
-        learning_minutes=learning_minutes,
-        learning_formatted=format_duration(learning_minutes),
-        entertainment_minutes=entertainment_minutes,
-        entertainment_formatted=format_duration(entertainment_minutes),
-        social_minutes=social_minutes,
-        social_formatted=format_duration(social_minutes),
-        utilities_minutes=utilities_minutes,
-        utilities_formatted=format_duration(utilities_minutes),
-        is_bedtime=is_bedtime,
-        bedtime_hour=bedtime_str,
-        wakeup_hour=wakeup_str,
+        total_formatted=format_usage_duration(total_actual_sec),
+        learning_minutes=category_seconds["LEARNING"] // 60,
+        learning_seconds=category_seconds["LEARNING"],
+        learning_formatted=format_usage_duration(category_seconds["LEARNING"]),
+        entertainment_minutes=category_seconds["ENTERTAINMENT"] // 60,
+        entertainment_seconds=category_seconds["ENTERTAINMENT"],
+        entertainment_formatted=format_usage_duration(category_seconds["ENTERTAINMENT"]),
+        social_minutes=category_seconds["SOCIAL"] // 60,
+        social_seconds=category_seconds["SOCIAL"],
+        social_formatted=format_usage_duration(category_seconds["SOCIAL"]),
+        utilities_minutes=category_seconds["UTILITY"] // 60,
+        utilities_seconds=category_seconds["UTILITY"],
+        utilities_formatted=format_usage_duration(category_seconds["UTILITY"]),
+        is_bedtime=curfew.is_within_curfew,
+        bedtime_hour=curfew.bedtime,
+        wakeup_hour=curfew.wakeup_time,
         child_name=child_name,
         daily_limit_minutes=child_daily_limit,
         remaining_minutes=child_remaining,
@@ -1262,42 +1261,18 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
 # ==========================================
 @app.get("/curfew/", response_model=schemas.CurfewResponse)
 def get_curfew(db: Session = Depends(database.get_db)):
-    """Lấy thông tin khung giờ giới nghiêm hiện tại."""
-    tl = db.query(models.TimeLimit).first()
-    b_hour = tl.bedtime if tl and tl.bedtime else "22:00"
-    w_hour = tl.wakeup_time if tl and tl.wakeup_time else "06:00"
-    return schemas.CurfewResponse(
-        bedtime=b_hour,
-        wakeup_time=w_hour,
-        is_within_curfew=is_within_curfew(b_hour, w_hour)
-    )
+    return current_curfew(db)
+
 
 @app.post("/curfew/", response_model=schemas.CurfewResponse)
 async def update_curfew(req: schemas.CurfewUpdateRequest, db: Session = Depends(database.get_db)):
-    """Cập nhật khung giờ giới nghiêm do phụ huynh tùy chỉnh."""
-    limits = db.query(models.TimeLimit).all()
-    if not limits:
-        tl = models.TimeLimit(bedtime=req.bedtime, wakeup_time=req.wakeup_time)
-        db.add(tl)
-    else:
-        for tl in limits:
-            tl.bedtime = req.bedtime
-            tl.wakeup_time = req.wakeup_time
+    store_curfew(db, req.bedtime, req.wakeup_time, req.timezone)
     db.commit()
 
-    active_curfew = is_within_curfew(req.bedtime, req.wakeup_time)
-    await manager.broadcast_json({
-        "type": "CURFEW_UPDATED",
-        "bedtime": req.bedtime,
-        "wakeup_time": req.wakeup_time,
-        "is_within_curfew": active_curfew
-    })
+    curfew = current_curfew(db)
+    await manager.broadcast_json({"type": "CURFEW_UPDATED", **curfew.model_dump()})
+    return curfew
 
-    return schemas.CurfewResponse(
-        bedtime=req.bedtime,
-        wakeup_time=req.wakeup_time,
-        is_within_curfew=active_curfew
-    )
 
 # ==========================================
 # QUẢN LÝ HỒ SƠ CON CÁI (CHILD PROFILES) & ĐĂNG NHẬP
