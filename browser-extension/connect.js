@@ -6,7 +6,8 @@ window.addEventListener("mmt-web-connect", async event => {
             type: "connect",
             origin: location.origin,
             token: event.detail.token,
-            targets: event.detail.targets
+            targets: event.detail.targets,
+            blocked: event.detail.blocked
         });
         if (response?.connected) document.documentElement.dataset.mmtWebTracking = "connected";
         else delete document.documentElement.dataset.mmtWebTracking;

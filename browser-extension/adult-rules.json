@@ -41,7 +41,21 @@
       "type": "block"
     },
     "condition": {
-      "regexFilter": "^https?://([a-z0-9-]+\\.)*(porn|porno|hentai|xxx|sex|18plus|phim18)([.-][a-z0-9-]+)+\\.?[:/]",
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*(sex)([.-][a-z0-9-]+)+\\.?[:/]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*([a-z0-9]+-)*(p[o0]rn[o0]?|hentai|xxx|18plus|phim18)(-[a-z0-9]+)*(\\.[a-z0-9-]+)+\\.?[:/]",
       "resourceTypes": [
         "main_frame",
         "sub_frame"

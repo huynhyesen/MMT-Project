@@ -23,6 +23,8 @@ test("a newly approved site is counted on another tab after the dashboard closes
     const reports = [];
     const event = name => ({ addListener(handler) { handlers[name] = handler; } });
     let policy = [];
+    let blocked = [];
+    let browserRules = [];
     let activity = "active";
     let storedTracking;
     let now = 100000;
@@ -30,6 +32,15 @@ test("a newly approved site is counted on another tab after the dashboard closes
     let alarmName;
     const chrome = {
         runtime: { onMessage: event("message") },
+        declarativeNetRequest: {
+            getDynamicRules: async () => structuredClone(browserRules),
+            updateDynamicRules: async ({ removeRuleIds, addRules }) => {
+                browserRules = [
+                    ...browserRules.filter(rule => !removeRuleIds.includes(rule.id)),
+                    ...structuredClone(addRules)
+                ];
+            }
+        },
         tabs: {
             query: async () => [activeTab],
             onActivated: event("activated"),
@@ -56,7 +67,7 @@ test("a newly approved site is counted on another tab after the dashboard closes
         fetch: async (url, options) => {
             assert.equal(options.headers.Authorization, "Bearer " + token);
             if (url === origin + "/web-tracking/policy") {
-                return { ok: true, json: async () => ({ targets: policy }) };
+                return { ok: true, json: async () => ({ targets: policy, blocked }) };
             }
             assert.equal(url, origin + "/web-tracking/usage");
             reports.push(JSON.parse(options.body));
@@ -107,4 +118,18 @@ test("a newly approved site is counted on another tab after the dashboard closes
     handlers.alarm({ name: alarmName });
     await settle();
     assert.equal(reports.length, 2);
+
+    blocked = ["blocked.example"];
+    handlers.alarm({ name: alarmName });
+    await settle();
+    assert.equal(browserRules.length, 1);
+    assert.equal(browserRules[0].action.type, "block");
+    assert.deepEqual(browserRules[0].condition.requestDomains, ["blocked.example"]);
+    assert.deepEqual(browserRules[0].condition.excludedRequestDomains, ["127.0.0.1"]);
+    assert.deepEqual(browserRules[0].condition.resourceTypes, ["main_frame", "sub_frame"]);
+
+    blocked = [];
+    handlers.alarm({ name: alarmName });
+    await settle();
+    assert.deepEqual(browserRules, []);
 });

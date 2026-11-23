@@ -579,18 +579,32 @@ def effective_web_rules(db, device):
     return rules
 
 
-def web_tracking_targets(db, device):
-    return [
-        host for host, rule in effective_web_rules(db, device).items()
-        if rule.action == "ALLOW" and not is_adult_host(host)
-    ]
+def web_rule_for_host(host, rules):
+    labels = host.split(".")
+    for index in range(len(labels)):
+        rule = rules.get(".".join(labels[index:]))
+        if rule and rule.action == "BLOCK":
+            return rule
+    return rules.get(host)
+
+
+def browser_web_policy(db, device):
+    rules = effective_web_rules(db, device)
+    targets = []
+    blocked = []
+    for host, rule in rules.items():
+        if rule.action == "BLOCK" or is_adult_host(host):
+            blocked.append(host)
+        elif rule.action == "ALLOW" and web_rule_for_host(host, rules).action == "ALLOW":
+            targets.append(host)
+    return {"targets": targets, "blocked": blocked}
 
 
 @app.get("/web-tracking/session")
 def web_tracking_session(request: Request, db: Session = Depends(database.get_db)):
     device = client_device(request)
     return JSONResponse(
-        {"token": security.web_tracking_token(device), "targets": web_tracking_targets(db, device)},
+        {"token": security.web_tracking_token(device), **browser_web_policy(db, device)},
         headers={"Cache-Control": "no-store"},
     )
 
@@ -598,7 +612,7 @@ def web_tracking_session(request: Request, db: Session = Depends(database.get_db
 @app.get("/web-tracking/policy")
 def web_tracking_policy(request: Request, db: Session = Depends(database.get_db)):
     return JSONResponse(
-        {"targets": web_tracking_targets(db, client_device(request))},
+        browser_web_policy(db, client_device(request)),
         headers={"Cache-Control": "no-store"},
     )
 
@@ -607,7 +621,7 @@ def web_tracking_policy(request: Request, db: Session = Depends(database.get_db)
 def record_web_usage(data: schemas.WebUsageCreate, request: Request, db: Session = Depends(database.get_db)):
     device = client_device(request)
     host = normalize_host(data.host)
-    rule = effective_web_rules(db, device).get(host)
+    rule = web_rule_for_host(host, effective_web_rules(db, device))
     if not host or is_adult_host(host) or not rule or rule.action != "ALLOW":
         raise HTTPException(403, "Tên miền chưa được phép theo dõi.")
 
@@ -698,7 +712,7 @@ def check_permission(payload: schemas.CheckPermissionRequest, request: Request, 
 
     # 3. Kiểm tra quy tắc cụ thể trong Database
     if is_web:
-        matched_rule = effective_web_rules(db, device).get(target)
+        matched_rule = web_rule_for_host(target, effective_web_rules(db, device))
     else:
         matched_rule = device_rules(db, device).filter(
             models.AppWebRule.rule_type == "APP",
@@ -939,6 +953,7 @@ def get_rules(request: Request, db: Session = Depends(database.get_db)):
         ).filter_by(device_id=device.id).group_by(models.MinimalTelemetryLog.app_name):
             key = target.lower().removeprefix("www.")
             usage[key] = usage.get(key, 0) + seconds
+    website_rules = effective_web_rules(db, device) if device else {}
     seen = set()
     results = []
     for r in rules:
@@ -951,12 +966,16 @@ def get_rules(request: Request, db: Session = Depends(database.get_db)):
         used_seconds = usage.get(target, 0) if device else (r.used_minutes or 0) * 60
         used_m = used_seconds // 60
         rem_m, rem_str, expired = format_remaining(limit_m, used_m)
+        matched_web_rule = web_rule_for_host(target, website_rules) if is_web else None
+        action = r.action
+        if is_web and (is_adult_host(target) or (matched_web_rule and matched_web_rule.action == "BLOCK")):
+            action = "BLOCK"
         results.append(schemas.AppWebRuleResponse(
             id=r.id,
             device_id=r.device_id,
             rule_type=r.rule_type,
             target_value=target if is_web and target else r.target_value,
-            action="BLOCK" if is_web and is_adult_host(target) else r.action,
+            action=action,
             time_limit_minutes=limit_m,
             used_minutes=used_m,
             used_seconds=used_seconds,

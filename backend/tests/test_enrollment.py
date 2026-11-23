@@ -162,6 +162,27 @@ def test_approved_web_usage_and_adult_blocking(parent_credentials):
         assert extension.post("/web-tracking/usage", json={
             "host": "porn.example", "duration_seconds": 10,
         }).status_code == 403
+        explicit = parent.post("/rules/", json={
+            "rule_type": "WEBSITE", "target_value": "https://blocked.example", "action": "BLOCK",
+        })
+        assert explicit.status_code == 201
+        policy = extension.get("/web-tracking/policy").json()
+        assert "blocked.example" in policy["blocked"]
+        assert "porn.example" in policy["blocked"]
+        assert "lesson.example" in policy["targets"]
+        with database.SessionLocal() as db:
+            db.add(models.AppWebRule(
+                device_id=device_id, rule_type="WEBSITE", target_value="sub.blocked.example", action="ALLOW",
+            ))
+            db.commit()
+        policy = extension.get("/web-tracking/policy").json()
+        assert "sub.blocked.example" not in policy["targets"]
+        assert extension.post("/web-tracking/usage", json={
+            "host": "sub.blocked.example", "duration_seconds": 15,
+        }).status_code == 403
+        assert parent.delete("/rules/" + explicit.json()["id"]).status_code == 200
+        assert "blocked.example" not in extension.get("/web-tracking/policy").json()["blocked"]
+
         assert parent.delete(f"/children/{child['id']}").status_code == 200
 
 

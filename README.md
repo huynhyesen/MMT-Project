@@ -67,7 +67,7 @@ Trẻ có thể xin mở web trong **Xin phép**. Sau khi phụ huynh duyệt, t
 
 Nếu một trang đã duyệt chưa hiện trong thống kê, kiểm tra tiện ích đã báo kết nối, tab web nằm trong cùng hồ sơ Chrome/Edge và báo cáo đang chọn đúng trẻ. Nếu trang chuyển sang tên miền khác với tên miền đã duyệt, kiểm tra địa chỉ cuối cùng trên thanh địa chỉ.
 
-Tiện ích chặn các tên miền và mẫu tên miền 18+ trong danh sách lọc, kể cả khi nhập địa chỉ trực tiếp. Agent bổ sung lớp chặn các tên miền phổ biến qua file `hosts` khi chạy với quyền quản trị. Phạm vi lọc phụ thuộc vào danh sách tên miền và trình duyệt đã bật tiện ích. Nội dung 18+ bên trong một trang thông thường có thể lọt qua.
+Tiện ích chặn các tên miền và mẫu tên miền 18+ trong danh sách lọc, kể cả khi nhập địa chỉ trực tiếp. Để chặn thêm trang, vào **Quy tắc Web/App** trên dashboard phụ huynh, chọn **Website → Chặn** rồi lưu tên miền. Sau khi Góc Của Con kết nối tiện ích, Chrome/Edge cập nhật quy tắc khoảng 30 giây một lần và chặn tên miền đó cùng các tên miền con. Agent bổ sung lớp chặn các tên miền phổ biến qua file `hosts` khi chạy với quyền quản trị. Phạm vi lọc phụ thuộc vào danh sách tên miền và trình duyệt đã bật tiện ích. Nội dung 18+ bên trong một trang thông thường có thể lọt qua.
 
 ### 4. Đặt giờ giới nghiêm
 

@@ -1,4 +1,5 @@
 const ALARM = "mmt-web-usage";
+const PARENT_BLOCK_RULE_ID = 10001;
 const MAX_SAMPLE_MS = 35_000;
 const MAX_BATCH_SECONDS = 120;
 let pendingTask = Promise.resolve();
@@ -42,16 +43,43 @@ function backendRequest(tracking, path, options = {}) {
     });
 }
 
-async function refreshTargets(tracking) {
+function policyDomains(domains) {
+    return [...new Set(domains)].filter(host =>
+        typeof host === "string" && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)).sort();
+}
+
+async function syncBrowserBlocks(domains, origin) {
+    if (!Array.isArray(domains)) return;
+    const requestDomains = policyDomains(domains);
+    // Keep the enrolled dashboard reachable from the child browser.
+    const excludedRequestDomains = [new URL(origin).hostname];
+    const [current] = await chrome.declarativeNetRequest.getDynamicRules({ ruleIds: [PARENT_BLOCK_RULE_ID] });
+    if (current &&
+        JSON.stringify(current.condition.requestDomains) === JSON.stringify(requestDomains) &&
+        JSON.stringify(current.condition.excludedRequestDomains) === JSON.stringify(excludedRequestDomains)) return;
+    if (!current && !requestDomains.length) return;
+
+    await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: [PARENT_BLOCK_RULE_ID],
+        addRules: requestDomains.length ? [{
+            id: PARENT_BLOCK_RULE_ID,
+            priority: 1,
+            action: { type: "block" },
+            condition: { requestDomains, excludedRequestDomains, resourceTypes: ["main_frame", "sub_frame"] }
+        }] : []
+    });
+}
+
+async function refreshPolicyFromBackend(tracking) {
+    let policy;
     try {
         const response = await backendRequest(tracking, "/web-tracking/policy");
-        if (response.ok) {
-            const { targets } = await response.json();
-            if (Array.isArray(targets)) tracking.targets = targets;
-        }
+        if (response.ok) policy = await response.json();
     } catch {
-        // Keep the known policy during a connection interruption.
+        // Retain the last known policy if the server is unreachable.
     }
+    if (Array.isArray(policy?.targets)) tracking.targets = policyDomains(policy.targets);
+    await syncBrowserBlocks(policy?.blocked, tracking.origin);
 }
 
 async function track(send = false, refreshPolicy = false) {
@@ -66,7 +94,7 @@ async function track(send = false, refreshPolicy = false) {
     const observedHost = await activeHost();
     if (refreshPolicy || (observedHost && observedHost !== tracking.observedHost &&
         !tracking.targets.includes(observedHost) && observedHost !== hostname(tracking.origin))) {
-        await refreshTargets(tracking);
+        await refreshPolicyFromBackend(tracking);
     }
     tracking.since = now;
     tracking.observedHost = observedHost;
@@ -107,15 +135,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (page.origin !== message.origin || !["/child/", "/child/index.html"].includes(page.pathname)) return;
     schedule(async () => {
         const { tracking: old } = await chrome.storage.session.get("tracking");
-        if (old && old.origin !== message.origin) {
-            respond({ connected: false });
-            return;
-        }
+        if (old && old.origin !== message.origin) return false;
         const sameProfile = old?.token.split(".")[0] === message.token.split(".")[0];
         if (sameProfile) await track();
         const { tracking } = await chrome.storage.session.get("tracking");
-        const targets = [...new Set(message.targets)].filter(host =>
-            typeof host === "string" && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host));
+        const targets = policyDomains(message.targets);
+        await syncBrowserBlocks(message.blocked, message.origin);
         const observedHost = await activeHost();
         await chrome.storage.session.set({ tracking: {
             origin: message.origin,
@@ -127,8 +152,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
             pending: sameProfile ? tracking.pending : {}
         } });
         if (!(await chrome.alarms.get(ALARM))) await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 });
-        respond({ connected: true });
-    });
+        return true;
+    }).then(connected => respond({ connected: connected === true }));
     return true;
 });
 

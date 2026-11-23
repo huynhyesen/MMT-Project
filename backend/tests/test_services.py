@@ -50,3 +50,11 @@ def test_curfew_overnight():
         "06:00",
         now
     )
+
+
+def test_adult_policy_matches_hostname_labels_without_reading_page_paths():
+    from agent.web_policy import is_adult_host, normalize_host
+
+    assert is_adult_host(normalize_host("https://test-p0rn.example/"))
+    assert is_adult_host(normalize_host("https://www.18plus.example./"))
+    assert not is_adult_host(normalize_host("https://school.example/lesson-about-porn"))
