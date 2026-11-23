@@ -1328,10 +1328,11 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
     total_actual_sec = sum(real_usage_sec_map.values()) or 0
     total_minutes = total_actual_sec // 60
 
-    rules = device_rules(db, device).all()
-    rule_limits = {}
-    for r in rules:
-        rule_limits.setdefault(r.target_value.lower(), r.time_limit_minutes)
+    app_rules = device_rules(db, device).filter(models.AppWebRule.rule_type == "APP").all()
+    app_limits = {}
+    for rule in app_rules:
+        app_limits.setdefault(rule.target_value.lower(), rule.time_limit_minutes)
+    website_rules = effective_web_rules(db, device)
 
     items: List[schemas.UsageItemResponse] = []
     web_hosts = {
@@ -1348,12 +1349,16 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         if tag == "OTHER" and name in web_hosts:
             cat = "Chưa phân loại"
         
-        limit_m = info["default_limit"]
-        clean_k = extract_target_name(name).lower()
-        for rk, rlimit in rule_limits.items():
-            if rk in clean_k or clean_k in rk:
-                limit_m = rlimit
-                break
+        if name in web_hosts:
+            rule = web_rule_for_host(name, website_rules)
+            limit_m = (rule.time_limit_minutes or 0) if rule else 0
+        else:
+            limit_m = info["default_limit"]
+            for rule_name, configured_limit in app_limits.items():
+                if rule_name in name or name in rule_name:
+                    if configured_limit is not None:
+                        limit_m = configured_limit
+                    break
 
         rem_m, rem_str, is_exp = format_remaining(limit_m, minutes)
 

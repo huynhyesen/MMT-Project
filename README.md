@@ -72,6 +72,8 @@ Web thông thường và tên miền chưa phân loại được mở ngay. Trê
 | **Chặn** | Tiện ích chặn tên miền và tên miền con theo quy tắc đã lưu. |
 | **Hết giờ** | Tab đang sử dụng chuyển sang màn hình hết giờ và có nút **Xin thêm giờ**. |
 
+Đồng hồ trong **Góc Của Con** hiển thị thời gian Backend đã ghi nhận và làm mới định kỳ. Agent chỉ đo ứng dụng đang ở tiền cảnh khi người dùng vừa thao tác. Chrome và Edge được đo theo tab bằng tiện ích. Trên Linux, việc ghi giờ ứng dụng cần phiên X11 với `xprop` và `xprintidle`; phiên Wayland vẫn có thể ghi giờ web bằng tiện ích.
+
 Tiện ích đo thời gian khi tab được chọn và cửa sổ trình duyệt có tiêu điểm. Video đang phát có tiếng vẫn được tính trong tab hiển thị khi trẻ rời chuột và bàn phím. Báo cáo chỉ lưu tên miền và số giây. Trang chưa nhận diện được được xếp vào **Chưa phân loại**.
 
 Tên miền 18+ thuộc bộ lọc bị chặn trước khi tải. Trang thông báo cho trẻ biết lý do và dashboard phụ huynh nhận cảnh báo có tên miền, hồ sơ và thời điểm. Các lần thử lại trên cùng tên miền trong vòng 5 phút được gộp. Tiện ích cần một phiên Góc Của Con đã đăng nhập để gửi cảnh báo. Bộ lọc áp dụng theo tên miền, nên nội dung 18+ bên trong một nền tảng thông thường có thể lọt qua.

@@ -22,6 +22,7 @@ function fakeBrowser(policy) {
     let now = 1000;
     let page = { id: 4, url: origin + "/child/" };
     let activity = "active";
+    let focused = true;
 
     const chrome = {
         runtime: {
@@ -29,7 +30,7 @@ function fakeBrowser(policy) {
             onMessage: event("message"), onInstalled: event("installed"), onStartup: event("startup"),
         },
         alarms: { get: async () => null, create: async () => {}, onAlarm: event("alarm") },
-        windows: { getLastFocused: async () => ({ focused: true, id: 1 }), onFocusChanged: event("focus") },
+        windows: { getLastFocused: async () => ({ focused, id: 1 }), onFocusChanged: event("focus") },
         idle: { queryState: async () => activity, setDetectionInterval() {}, onStateChanged: event("idle") },
         storage: { session: {
             get: async key => ({ [key]: structuredClone(storage[key]) }),
@@ -81,6 +82,7 @@ function fakeBrowser(policy) {
         rules: () => installed,
         navigate: (url, audible = false) => { page = { id: 4, url, audible }; },
         setActivity: state => { activity = state; },
+        setFocus: active => { focused = active; },
         advance: ms => { now += ms; },
         settle: () => vm.runInContext("work", context),
         message: (value, sender) => new Promise(resolve => handlers.message(value, sender, resolve)),
@@ -143,4 +145,29 @@ test("the worker records ordinary websites and redirects the active tab when its
     await browser.settle();
     assert.deepEqual(browser.reports[1], { host: "lesson.example", duration_seconds: 4 });
     assert.deepEqual(browser.writes, [extensionOrigin + "blocked.html?kind=expired&host=lesson.example"]);
+});
+
+
+test("only the foreground tab is counted across connection renewals, blur and lock", async () => {
+    const browser = fakeBrowser({ targets: [], track_unrestricted: true });
+    browser.navigate("https://ordinary.example/");
+    await browser.connect();
+    browser.advance(2000);
+    await browser.connect();
+    browser.advance(3000);
+
+    browser.setFocus(false);
+    browser.handlers.focus(-1);
+    await browser.settle();
+    assert.deepEqual(browser.reports, [{ host: "ordinary.example", duration_seconds: 5 }]);
+
+    browser.advance(15000);
+    browser.setFocus(true);
+    browser.setActivity("locked");
+    browser.handlers.idle("locked");
+    await browser.settle();
+    browser.advance(20000);
+    browser.handlers.alarm({ name: "mmt-web-usage" });
+    await browser.settle();
+    assert.equal(browser.reports.length, 1);
 });

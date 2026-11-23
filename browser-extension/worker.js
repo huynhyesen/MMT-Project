@@ -239,12 +239,9 @@ async function connect(message, sender) {
     const { tracking: old } = await chrome.storage.session.get("tracking");
     if (old && old.origin !== message.origin) return false;
     const sameProfile = old?.token.split(".")[0] === message.token.split(".")[0];
-    if (sameProfile) await track();
-    const { tracking: previous } = await chrome.storage.session.get("tracking");
-    const tracking = {
-        origin: message.origin, token: message.token,
-        since: Date.now(), pending: sameProfile && previous ? previous.pending : {}
-    };
+    const tracking = sameProfile
+        ? { ...old, token: message.token }
+        : { origin: message.origin, token: message.token, since: Date.now(), pending: {} };
     const policyResponse = await backendRequest(tracking, "/web-tracking/policy");
     if (!policyResponse.ok) return false;
     tracking.policy = await policyResponse.json();

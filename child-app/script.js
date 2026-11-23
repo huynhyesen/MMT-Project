@@ -12,10 +12,8 @@ const API_BASE = location.origin;
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
         let ws = null;
-        let countdownInterval = null;
         let countdownSeconds = -1;
-        let lastServerDailyLimit = null;
-        let isTickerRunning = false;
+        let usageRequestId = 0;
         let selectedMinutes = 15;
         let alert15Shown = false;
         let alert5Shown = false;
@@ -287,7 +285,6 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 showToast(`🤖 AI Content Filter vừa chặn: ${data.source || 'nội dung vi phạm'}`, "rose");
             } else if (type === "CHILD_SWITCHED" || type === "PROFILES_UPDATED") {
                 countdownSeconds = -1;
-                lastServerDailyLimit = null;
                 fetchActiveChild();
                 fetchUsageStats();
             } else if (type === "CURFEW_UPDATED") {
@@ -295,14 +292,12 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             } else if (type === "DAILY_RESET_TRIGGERED" || type === "DAILY_RESET") {
                 showToast("🌅 Chào ngày mới! Thời gian đã được làm mới tự động.", "emerald");
                 countdownSeconds = -1;
-                lastServerDailyLimit = null;
                 fetchAllowedRules();
                 fetchUsageStats();
                 fetchChildRequests();
             } else if (type === "USAGE_RESET" || type === "RULES_RESET" || type === "FULL_RESET" || type === "LIMIT_UPDATED") {
                 showToast("⚙️ Dữ liệu hệ thống vừa được cập nhật!", "blue");
                 countdownSeconds = -1;
-                lastServerDailyLimit = null;
                 fetchAllowedRules();
                 fetchUsageStats();
                 fetchChildRequests();
@@ -515,7 +510,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                                     </button>
                                 ` : `
                                     <button data-target="${escapeHtml(r.target_value)}" onclick="startApprovedAppSession(this.dataset.target)" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition">
-                                        Bắt đầu phiên ứng dụng
+                                        Kiểm tra quyền mở
                                     </button>
                                 `}
                             </div>
@@ -592,75 +587,6 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             }
         }
 
-        let activeUsageSession = null;
-        let activeSessionTimer = null;
-        let activeSessionSeconds = 0;
-
-        function startActiveUsageTracking(targetName, aiInfo) {
-            if (activeSessionTimer) clearInterval(activeSessionTimer);
-
-            activeUsageSession = targetName;
-            activeSessionSeconds = 0;
-
-            const banner = document.getElementById("active-tracking-banner");
-            if (banner) {
-                document.getElementById("active-tracking-title").textContent = targetName;
-                const catEl = document.getElementById("active-tracking-category");
-                if (catEl) {
-                    catEl.textContent = `${aiInfo.icon || '📱'} ${aiInfo.category || 'Chưa phân loại'}`;
-                    catEl.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${aiInfo.badge_color || 'bg-blue-100 text-blue-800 border-blue-300'}`;
-                }
-                document.getElementById("active-tracking-time").textContent = "00:00";
-                banner.classList.remove("hidden");
-            }
-
-            // Gửi telemetry 5 giây đầu tiên
-            sendAppTelemetry(targetName, 5);
-
-            // Bắt đầu đếm giây sử dụng cho phiên này
-            activeSessionTimer = setInterval(() => {
-                activeSessionSeconds++;
-                const mins = Math.floor(activeSessionSeconds / 60);
-                const secs = activeSessionSeconds % 60;
-                const formatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-                const timeEl = document.getElementById("active-tracking-time");
-                if (timeEl) timeEl.textContent = formatted;
-
-                // Mỗi 5 giây gửi telemetry để cộng dồn vào bảng thống kê
-                if (activeSessionSeconds % 5 === 0) {
-                    sendAppTelemetry(targetName, 5);
-                }
-            }, 1000);
-        }
-
-        async function sendAppTelemetry(appName, durationSec) {
-            try {
-                await fetch(`${API_BASE}/telemetry/`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        app_name: appName,
-                        duration_seconds: durationSec
-                    })
-                });
-                // Cập nhật lại số liệu bảng thống kê
-                fetchUsageStats();
-            } catch (e) {}
-        }
-
-        function stopActiveUsageTracking() {
-            if (!activeUsageSession) return;
-            if (activeSessionTimer) clearInterval(activeSessionTimer);
-            activeSessionTimer = null;
-            const banner = document.getElementById("active-tracking-banner");
-            if (banner) banner.classList.add("hidden");
-            const durationMins = Math.max(1, Math.round(activeSessionSeconds / 60));
-            showToast(`⏹️ Đã dừng phiên dùng "${activeUsageSession}". Đã ghi nhận ${durationMins} phút vào bảng thống kê!`, "emerald");
-            activeUsageSession = null;
-            fetchUsageStats();
-            fetchAllowedRules();
-        }
-
         async function startApprovedAppSession(target) {
             try {
                 const response = await fetch(`${API_BASE}/check-permission/`, {
@@ -671,7 +597,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 if (!response.ok) throw new Error("Không thể kiểm tra quyền truy cập.");
                 const result = await response.json();
                 if (!result.allowed) throw new Error(result.reason);
-                startActiveUsageTracking(target, result.classification);
+                showToast(`Bạn có thể mở ${target} trên máy. Agent sẽ ghi nhận khi bạn sử dụng ứng dụng.`, "blue");
             } catch (error) {
                 showToast(error.message, "rose");
             }
@@ -744,7 +670,6 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     closeChildLoginModal();
                     showToast(`🎉 ${data.message}`, "emerald");
                     countdownSeconds = -1;
-                    lastServerDailyLimit = null;
                     await fetchActiveChild();
                     openBrowserRequest();
                     initWebSocket();
@@ -885,24 +810,14 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             }
         }
 
-        function initCountdownTicker() {
-            if (isTickerRunning) return;
-            isTickerRunning = true;
-
-            setInterval(() => {
-                if (countdownSeconds > 0) {
-                    countdownSeconds--;
-                }
-                renderCountdownDisplay();
-            }, 1000);
-        }
-
         // --- TẢI DỮ LIỆU THỐNG KÊ SỬ DỤNG (USAGE STATS) ---
         async function fetchUsageStats() {
+            const requestId = ++usageRequestId;
             try {
                 const res = await fetch(`${API_BASE}/usage-stats/`);
                 if (!res.ok) return;
                 const data = await res.json();
+                if (requestId !== usageRequestId) return;
 
                 // Thống kê nhanh theo danh mục
                 const learnStr = data.learning_formatted || "0 phút";
@@ -942,43 +857,25 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     extBadge.classList.add("hidden");
                 }
 
-                // Cập nhật thanh tiến độ theo hạn mức thực tế
-                const pct = dailyLimit > 0 ? Math.min(100, Math.round((totalMins / dailyLimit) * 100)) : 0;
-                document.getElementById("summary-percentage-text").textContent = `${pct}% (Đã dùng ${totalMins}/${dailyLimit} phút)`;
+                const totalSeconds = data.total_seconds ?? totalMins * 60;
+                const pct = dailyLimit > 0 ? Math.min(100, Math.round(totalSeconds / (dailyLimit * 60) * 100)) : 0;
+                document.getElementById("summary-percentage-text").textContent =
+                    `${pct}% · Đã dùng ${formatUsageSeconds(totalSeconds)} / ${dailyLimit} phút`;
 
                 const pBar = document.getElementById("summary-progress-bar");
                 pBar.style.width = `${pct}%`;
                 pBar.className = pct >= 90 ? "bg-rose-400 h-3 rounded-full transition-all duration-500" : (pct >= 60 ? "bg-amber-400 h-3 rounded-full transition-all duration-500" : "bg-emerald-400 h-3 rounded-full transition-all duration-500");
 
-                // ĐỒNG BỘ ĐỒNG HỒ ĐẾM NGƯỢC (CHẠY LIÊN TỤC VỀ 0, TUYỆT ĐỐI KHÔNG BỊ RESET MỖI PHÚT)
-                if (countdownSeconds < 0) {
-                    // Lần đầu tải trang: Khởi tạo chính xác số giây còn lại từ server
-                    countdownSeconds = Math.max(0, serverRemainingSec);
-                    lastServerDailyLimit = dailyLimit;
-                    renderCountdownDisplay();
-                } else if (lastServerDailyLimit !== null && dailyLimit > lastServerDailyLimit) {
-                    // Phụ huynh vừa duyệt thêm giờ: cộng dồn đúng số giây được duyệt vào đồng hồ hiện tại
-                    const addedSec = (dailyLimit - lastServerDailyLimit) * 60;
-                    countdownSeconds += addedSec;
-                    lastServerDailyLimit = dailyLimit;
-                    renderCountdownDisplay();
-                } else if (lastServerDailyLimit !== null && dailyLimit < lastServerDailyLimit) {
-                    // Phụ huynh giảm hạn mức: cập nhật lại theo server
-                    countdownSeconds = Math.max(0, serverRemainingSec);
-                    lastServerDailyLimit = dailyLimit;
-                    renderCountdownDisplay();
-                } else if (serverRemainingSec <= 0) {
-                    // Server xác nhận đã hết giờ hoàn toàn: kẹp về 00:00:00
-                    countdownSeconds = 0;
-                    renderCountdownDisplay();
-                } else {
-                    // Khi đang đếm bình thường: Giữ nguyên giây đang đếm, chỉ đồng bộ nếu lệch quá lớn (>45s) do máy ngủ
-                    const drift = Math.abs(countdownSeconds - serverRemainingSec);
-                    if (drift > 45 && serverRemainingSec < countdownSeconds) {
-                        countdownSeconds = serverRemainingSec;
-                        renderCountdownDisplay();
-                    }
+                countdownSeconds = Math.max(0, serverRemainingSec);
+                if (countdownSeconds > 300) {
+                    alert5Shown = false;
+                    document.getElementById("graceful-alert-5m").classList.add("hidden");
                 }
+                if (countdownSeconds > 900) {
+                    alert15Shown = false;
+                    document.getElementById("graceful-alert-15m").classList.add("hidden");
+                }
+                renderCountdownDisplay();
 
                 // Giờ giới nghiêm Bedtime
                 const bedtimeBanner = document.getElementById("bedtime-banner");
@@ -1096,7 +993,6 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         // --- KHỞI TẠO BAN ĐẦU ---
         window.addEventListener("DOMContentLoaded", async () => {
             updateSoundUI();
-            initCountdownTicker();
             showBackendAddress();
             await fetchActiveChild();
             initWebSocket();
@@ -1108,6 +1004,10 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
             fetchAllowedRules();
             fetchUsageStats();
             fetchChildRequests();
+
+            document.addEventListener("visibilitychange", () => {
+                if (!document.hidden) fetchUsageStats();
+            });
 
             // Định kỳ cập nhật dữ liệu ngầm mỗi 10 giây
             setInterval(() => {

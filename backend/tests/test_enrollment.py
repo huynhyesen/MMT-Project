@@ -386,6 +386,8 @@ def test_free_browsing_blocks_adult_domains_and_enforces_website_limits(parent_c
             report = parent.get(f"/usage-stats/?child_id={profile['id']}").json()
             assert report["unclassified_seconds"] == 13
             assert report["items"][0]["category"] == "Chưa phân loại"
+            assert report["items"][0]["time_limit_minutes"] == 0
+            assert report["items"][0]["is_expired"] is False
 
             configured = parent.post("/rules/", json={
                 "rule_type": "WEBSITE", "target_value": "lesson.example",
