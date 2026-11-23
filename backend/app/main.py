@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 from contextlib import asynccontextmanager
 import json
@@ -27,8 +27,11 @@ from .services.formatters import (
     format_usage_duration,
 )
 
-from .services.curfew import current_curfew, store_curfew
+from .services.curfew import (
+    current_curfew, curfew_clock, household_timezone, store_curfew, usage_day_start
+)
 from .services.realtime import manager
+from agent.ai_filter.text_analyzer import AITextAnalyzer
 from agent.web_policy import additional_adult_hosts, is_adult_host, normalize_host
 
 
@@ -155,8 +158,10 @@ def clear_usage(db: Session, cutoff=None):
 
 def perform_daily_reset(db: Session, today_str: Optional[str] = None, *, automatic=False):
     """Reset daily counters and pending requests in one transaction."""
-    today_str = today_str or datetime.now().date().isoformat()
-    cutoff = datetime.fromisoformat(today_str).astimezone(timezone.utc).replace(tzinfo=None)
+    timezone_name = household_timezone(db)
+    day = date.fromisoformat(today_str) if today_str else curfew_clock(timezone_name).date()
+    today_str = day.isoformat()
+    cutoff = usage_day_start(timezone_name, day)
     if automatic:
         previous_day = db.get(models.DailyRollover, 1)
         if previous_day and previous_day.day >= today_str:
@@ -463,23 +468,32 @@ app.include_router(relay.router)
 
 
 
+text_filter = AITextAnalyzer()
+
+
 @app.post("/ai/content-check", response_model=schemas.ContentFilterResult)
 def api_content_check(req: schemas.ContentFilterAnalysisRequest):
-    """Endpoint phân tích nội dung AI văn bản theo thời gian thực."""
-    import sys
-    sys.path.insert(0, os.path.join(BASE_DIR, "agent"))
-    from ai_filter.text_analyzer import AITextAnalyzer
-    analyzer = AITextAnalyzer()
+    """Check an explicitly supplied hostname or text against the available rules."""
+    if req.image_base64 is not None:
+        raise HTTPException(422, "Bản hiện tại hỗ trợ tên miền và văn bản. Phân tích ảnh chưa khả dụng.")
 
-    text_to_check = f"{req.window_title or ''} {req.text_content or ''} {req.url or ''}".strip()
-    result = analyzer.analyze(text_to_check)
+    host = normalize_host(req.url)
+    text = " ".join(part for part in (req.window_title, req.text_content) if part).strip()
+    if not host and not text:
+        raise HTTPException(422, "Cần nhập tên miền hợp lệ hoặc văn bản để kiểm tra.")
+    if host and is_adult_host(host):
+        return schemas.ContentFilterResult(
+            is_safe=False, violation_category="ADULT",
+            reason="Tên miền thuộc bộ lọc 18+.", suggested_action="BLOCK_AND_CLOSE",
+        )
 
+    result = text_filter.analyze(text)
     return schemas.ContentFilterResult(
         is_safe=result["is_safe"],
         violation_category=result.get("category"),
         confidence=result.get("confidence", 0.0),
         reason=result.get("reason"),
-        suggested_action=result.get("suggested_action", "ALLOW")
+        suggested_action=result.get("suggested_action", "ALLOW"),
     )
 
 
@@ -596,10 +610,17 @@ def web_rule_for_host(host, rules):
     return rules.get(host)
 
 
-def web_usage_seconds(db, device):
-    logs = owned_rows(db.query(
+def todays_usage(db, device, query, timezone_name=None):
+    cutoff = usage_day_start(timezone_name or household_timezone(db))
+    return owned_rows(query, models.MinimalTelemetryLog, device).filter(
+        models.MinimalTelemetryLog.timestamp >= cutoff
+    )
+
+
+def web_usage_seconds(db, device, timezone_name=None):
+    logs = todays_usage(db, device, db.query(
         models.MinimalTelemetryLog.app_name, func.sum(models.MinimalTelemetryLog.duration_seconds)
-    ), models.MinimalTelemetryLog, device).group_by(models.MinimalTelemetryLog.app_name)
+    ), timezone_name).group_by(models.MinimalTelemetryLog.app_name)
     return dict(logs.all())
 
 
@@ -610,7 +631,8 @@ def remaining_web_seconds(rule, used_seconds):
 
 def browser_web_policy(db, device):
     rules = effective_web_rules(db, device)
-    usage = web_usage_seconds(db, device)
+    curfew = current_curfew(db)
+    usage = web_usage_seconds(db, device, curfew.timezone)
     policy = {
         "targets": [], "blocked": [], "ask": [], "expired": [],
         "remaining": {}, "expired_usage": {}, "track_unrestricted": True, "adult": sorted(additional_adult_hosts()),
@@ -636,7 +658,6 @@ def browser_web_policy(db, device):
     daily_remaining = max(0, daily_limit * 60 - sum(usage.values()))
     policy["daily_remaining"] = daily_remaining
     policy["daily_used_seconds"] = sum(usage.values())
-    curfew = current_curfew(db)
     policy["restriction"] = (
         "curfew" if curfew.is_within_curfew else "daily" if daily_remaining == 0 else None
     )
@@ -746,7 +767,8 @@ def receive_telemetry(data: schemas.TelemetryCreate, request: Request, db: Sessi
 
     # Đồng bộ used_minutes cho quy tắc (nếu có)
     if not device:  # Keep the legacy aggregate counter for parent-originated telemetry.
-        target_total_sec = db.query(func.sum(models.MinimalTelemetryLog.duration_seconds)).filter(
+        total = db.query(func.sum(models.MinimalTelemetryLog.duration_seconds))
+        target_total_sec = todays_usage(db, device, total).filter(
             models.MinimalTelemetryLog.app_name == clean_target
         ).scalar() or 0
         matched_rule = db.query(models.AppWebRule).filter_by(target_value=clean_target).first()
@@ -757,11 +779,11 @@ def receive_telemetry(data: schemas.TelemetryCreate, request: Request, db: Sessi
     return {"status": "success", "message": "Telemetry logged safely.", "target": clean_target}
 
 # ==========================================
-# 3.1. KIỂM TRA QUYỀN TRUY CẬP VÀ GÁN NHÃN AI
+# 3.1. KIỂM TRA QUYỀN TRUY CẬP VÀ PHÂN LOẠI
 # ==========================================
 @app.post("/check-permission/")
 async def check_permission(payload: schemas.CheckPermissionRequest, request: Request, db: Session = Depends(database.get_db)):
-    """Kiểm tra một web/app có được phép hay không, đồng thời gán nhãn AI và trả về hạn mức."""
+    """Kiểm tra một web/app có được phép hay không, đồng thời phân loại và trả về hạn mức."""
     device = client_device(request)
     raw_target = payload.target
     host = normalize_host(raw_target)
@@ -770,7 +792,7 @@ async def check_permission(payload: schemas.CheckPermissionRequest, request: Req
     if not target:
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp địa chỉ web hoặc tên ứng dụng")
 
-    classification = classify_item(target)
+    classification = classify_item(target, is_web=bool(is_web))
     if is_web and is_adult_host(host):
         if device:
             await log_adult_website_attempt(host, device, db)
@@ -780,14 +802,13 @@ async def check_permission(payload: schemas.CheckPermissionRequest, request: Req
     # 1. Kiểm tra giờ giới nghiêm (Bedtime Mode)
     curfew = current_curfew(db)
     if curfew.is_within_curfew:
-        timezone_label = curfew.timezone or "giờ máy chủ"
         return {
             "allowed": False,
             "target": target,
             "classification": classification,
             "reason": (
                 f"Đang trong giờ giới nghiêm ({curfew.bedtime}–{curfew.wakeup_time}). "
-                f"Giờ app đang dùng là {curfew.current_time} ({timezone_label})."
+                f"Giờ app đang dùng là {curfew.current_time} ({curfew.timezone})."
             ),
             "is_curfew": True
         }
@@ -795,7 +816,8 @@ async def check_permission(payload: schemas.CheckPermissionRequest, request: Req
     # 2. Kiểm tra hạn mức chung hôm nay của trẻ
     active_child = db.get(models.ChildProfile, device.child_profile_id) if device else None
     child_limit = active_child.daily_limit_minutes if active_child and active_child.daily_limit_minutes else 120
-    telemetry = owned_rows(db.query(func.sum(models.MinimalTelemetryLog.duration_seconds)), models.MinimalTelemetryLog, device)
+    sums = db.query(func.sum(models.MinimalTelemetryLog.duration_seconds))
+    telemetry = todays_usage(db, device, sums, curfew.timezone)
     db_total_sec = telemetry.scalar() or 0
     total_mins = db_total_sec // 60
     if total_mins >= child_limit and child_limit > 0:
@@ -877,10 +899,11 @@ async def check_permission(payload: schemas.CheckPermissionRequest, request: Req
     }
 
 @app.post("/classify/")
-def api_classify(payload: dict):
-    """Sử dụng AI để gán nhãn phân loại cho web hoặc app."""
-    target = extract_target_name(payload.get("target", ""))
-    return classify_item(target)
+def api_classify(payload: schemas.CheckPermissionRequest):
+    """Assign a reporting category from the hostname or application name."""
+    target = extract_target_name(payload.target)
+    is_web = payload.rule_type == "WEBSITE" if payload.rule_type else None
+    return classify_item(target, is_web=is_web)
 
 # ==========================================
 # 4. XIN PHÉP & PHÊ DUYỆT (NT3 & NT5)
@@ -1073,9 +1096,7 @@ def get_rules(request: Request, db: Session = Depends(database.get_db)):
     rules = device_rules(db, device).all()
     usage = {}
     if device:
-        for target, seconds in db.query(
-            models.MinimalTelemetryLog.app_name, func.sum(models.MinimalTelemetryLog.duration_seconds)
-        ).filter_by(device_id=device.id).group_by(models.MinimalTelemetryLog.app_name):
+        for target, seconds in web_usage_seconds(db, device).items():
             key = target.lower().removeprefix("www.")
             usage[key] = usage.get(key, 0) + seconds
     website_rules = effective_web_rules(db, device) if device else {}
@@ -1306,7 +1327,7 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         selected_child = db.get(models.ChildProfile, device.child_profile_id)
     curfew = current_curfew(db)
 
-    # Chỉ thống kê dữ liệu thực tế từ telemetry (AI gán nhãn phân loại)
+    # Chỉ thống kê dữ liệu telemetry ghi trong ngày hiện tại của gia đình.
     real_usage_sec_map = {}
 
     logs = db.query(
@@ -1316,7 +1337,9 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
     if selected_child and not device:
         db_logs = []
     else:
-        db_logs = owned_rows(logs, models.MinimalTelemetryLog, device).group_by(models.MinimalTelemetryLog.app_name).all()
+        db_logs = todays_usage(db, device, logs, curfew.timezone).group_by(
+            models.MinimalTelemetryLog.app_name
+        ).all()
 
     for app_name, total_sec in db_logs:
         if is_system_process(app_name):
@@ -1336,14 +1359,14 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
 
     items: List[schemas.UsageItemResponse] = []
     web_hosts = {
-        host for host, in owned_rows(db.query(models.MinimalTelemetryLog.domain), models.MinimalTelemetryLog, device)
+        host for host, in todays_usage(db, device, db.query(models.MinimalTelemetryLog.domain), curfew.timezone)
         .filter(models.MinimalTelemetryLog.domain.is_not(None)).distinct()
     }
     category_seconds = {"LEARNING": 0, "ENTERTAINMENT": 0, "SOCIAL": 0, "UTILITY": 0, "OTHER": 0}
 
     for name, seconds in sorted(real_usage_sec_map.items(), key=lambda item: item[1], reverse=True):
         minutes = seconds // 60
-        info = classify_item(name)
+        info = classify_item(name, is_web=True if name in web_hosts else None)
         cat = info["category"]
         tag = info["tag"]
         if tag == "OTHER" and name in web_hosts:
@@ -1412,6 +1435,7 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         is_bedtime=curfew.is_within_curfew,
         bedtime_hour=curfew.bedtime,
         wakeup_hour=curfew.wakeup_time,
+        timezone=curfew.timezone,
         child_name=child_name,
         daily_limit_minutes=child_daily_limit,
         remaining_minutes=child_remaining,
@@ -1578,9 +1602,11 @@ def get_alerts(db: Session = Depends(database.get_db)):
     ]
 
 @app.post("/alerts/", response_model=schemas.AlertLogResponse)
-async def create_alert(alert: schemas.AlertLogCreate, db: Session = Depends(database.get_db)):
+async def create_alert(alert: schemas.AlertLogCreate, request: Request, db: Session = Depends(database.get_db)):
     """Ghi nhận cảnh báo khi trẻ cố tình truy cập web lạ hoặc ứng dụng bị cấm."""
+    device = client_device(request)
     new_alert = models.AlertLog(
+        device_id=device.id if device else None,
         target_value=alert.target_value.strip(),
         reason=alert.reason.strip(),
         category=alert.category or "UNAPPROVED_ACCESS",

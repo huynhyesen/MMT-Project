@@ -1,4 +1,9 @@
 from datetime import datetime
+from types import SimpleNamespace
+from unicodedata import normalize
+
+from agent import blocker
+from agent.ai_filter.text_analyzer import AITextAnalyzer
 
 from app.services.classification import (
     classify_item,
@@ -30,6 +35,46 @@ def test_classify_entertainment():
     result = classify_item("youtube.com")
 
     assert result["tag"] == "ENTERTAINMENT"
+
+
+def test_web_classification_matches_whole_domain_labels():
+    assert classify_item("m.youtube.com")["tag"] == "ENTERTAINMENT"
+    assert classify_item("classroom.google.com")["tag"] == "LEARNING"
+    assert classify_item("youtube-help.example")["tag"] == "OTHER"
+    assert classify_item("youtube.com.example")["tag"] == "OTHER"
+    assert classify_item("winword.exe")["tag"] == "LEARNING"
+
+
+def test_text_rules_warn_for_normalized_keywords_and_skip_partial_words():
+    analyzer = AITextAnalyzer()
+    assert analyzer.analyze("Alphabet practice in Sussex")["is_safe"]
+    assert analyzer.analyze("Blood pressure in a biology lesson")["is_safe"]
+    assert analyzer.analyze("Giáo dục giới tính")["is_safe"]
+    result = analyzer.analyze(normalize("NFD", "Cá cược trực tuyến"))
+    assert result["category"] == "GAMBLING"
+    assert result["suggested_action"] == "WARN"
+
+
+def test_app_blocker_closes_only_matching_executable(monkeypatch):
+    terminated = []
+    names = ["GAME.EXE", "GameEditor.exe", "winlogon.exe", "python3.12", "cmd.exe"]
+    processes = [
+        SimpleNamespace(
+            info={"pid": index, "name": name, "cmdline": ["Game.exe"]},
+            terminate=lambda name=name: terminated.append(name),
+            wait=lambda timeout: None,
+        )
+        for index, name in enumerate(names, start=100)
+    ]
+    monkeypatch.setattr(blocker.psutil, "process_iter", lambda attrs: processes)
+    monkeypatch.setattr(blocker.os, "getpid", lambda: 99)
+
+    assert blocker.kill_blocked_process("game")
+    assert not blocker.kill_blocked_process("winlogon.exe")
+    assert not blocker.kill_blocked_process("python3.12")
+    assert terminated == ["GAME.EXE"]
+    assert blocker.matches_app_rule("RobloxPlayerBeta.exe", "roblox")
+    assert not blocker.matches_app_rule("NotepadPlusPlus.exe", "notepad")
 
 
 def test_format_duration():

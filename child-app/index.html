@@ -120,7 +120,6 @@
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold">Dành cho Trẻ Em</span>
                     <span id="bedtime-badge-text" class="text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold">Khóa: 22:00 → Mở: 06:00</span>
-                    <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300 flex items-center gap-1">🤖 Lọc AI: Bật</span>
                     <span class="text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 font-bold border border-indigo-200 flex items-center gap-1">🔒 Chống tắt ngầm: Bật</span>
                 </div>
                 <h2 id="current-tab-title" class="text-xl md:text-2xl font-black text-slate-800 tracking-tight mt-1">Tổng Quan & Đếm Ngược</h2>
@@ -173,18 +172,18 @@
             <button onclick="document.getElementById('parent-message-banner').classList.add('hidden')" class="text-indigo-400 hover:text-indigo-700 font-bold px-2">&times;</button>
         </div>
 
-        <!-- BANNER THEO DÕI & ĐẾM GIỜ WEB/APP ĐANG SỬ DỤNG (AI GÁN NHÃN) -->
+        <!-- TRẠNG THÁI LỌC WEB VÀ ĐẾM GIỜ -->
         <p id="web-tracking-status" class="hidden mb-4 text-xs text-slate-600" role="status"></p>
 
 
-        <!-- CẢNH BÁO AI CONTENT FILTERING (BẢO VỆ NỘI DUNG THỜI GIAN THỰC) -->
+        <!-- CẢNH BÁO NỘI DUNG -->
         <div id="ai-content-alert" class="hidden mb-6 p-4 bg-purple-50 border-2 border-purple-400 rounded-2xl text-purple-900 shadow-md">
             <div class="flex items-start gap-3">
                 <span class="text-3xl animate-bounce">🤖</span>
                 <div class="flex-1">
-                    <h4 class="font-bold text-sm text-purple-900" id="ai-alert-title">AI CONTENT FILTER: NỘI DUNG ĐÃ BỊ TẠM DỪNG!</h4>
+                    <h4 class="font-bold text-sm text-purple-900" id="ai-alert-title">Cảnh báo nội dung</h4>
                     <p class="text-xs text-purple-800 mt-1" id="ai-alert-desc">
-                        Hệ thống AI vừa phát hiện nội dung có thể chứa hình ảnh hoặc từ ngữ nhạy cảm (18+, bạo lực, cá cược) không phù hợp với lứa tuổi của con. Hệ thống đã tạm dừng để bảo vệ con an toàn!
+                        Xem thông báo để biết lý do.
                     </p>
                     <div class="mt-2.5 flex items-center gap-2">
                         <button onclick="document.getElementById('ai-content-alert').classList.add('hidden')" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold shadow-xs">

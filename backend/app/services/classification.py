@@ -1,3 +1,32 @@
+from agent.web_policy import normalize_host
+
+
+WEB_CATEGORIES = {
+    "LEARNING": {
+        "khanacademy.org", "wikipedia.org", "duolingo.com", "scratch.mit.edu", "coursera.org",
+        "edx.org", "udemy.com", "quizlet.com", "hocmai.vn", "vio.edu.vn", "vnedu.vn", "olm.vn",
+        "vietjack.com", "geogebra.org", "code.org", "w3schools.com", "leetcode.com", "hackerrank.com",
+        "stackoverflow.com", "github.com", "gitlab.com", "python.org", "violet.vn", "zoom.us",
+        "classroom.google.com", "meet.google.com", "teams.microsoft.com", "schoology.com",
+    },
+    "ENTERTAINMENT": {
+        "youtube.com", "youtu.be", "netflix.com", "spotify.com", "roblox.com", "minecraft.net",
+        "steampowered.com", "steamcommunity.com", "epicgames.com", "friv.com", "poki.com",
+        "bilibili.com", "twitch.tv", "webtoons.com", "soundcloud.com", "music.apple.com",
+        "zingmp3.vn", "nhaccuatui.com", "fptplay.vn", "vieon.vn", "vtvgo.vn", "chess.com",
+    },
+    "SOCIAL": {
+        "discord.com", "discord.gg", "facebook.com", "fb.com", "messenger.com", "zalo.me",
+        "telegram.org", "t.me", "tiktok.com", "instagram.com", "threads.net", "twitter.com",
+        "x.com", "skype.com", "viber.com", "whatsapp.com", "wechat.com", "reddit.com",
+        "pinterest.com", "snapchat.com", "tumblr.com",
+    },
+    "UTILITY": {
+        "google.com", "bing.com", "canva.com", "figma.com", "gimp.org", "audacityteam.org",
+    },
+}
+
+
 def extract_target_name(target: str) -> str:
     """Normalize domain or application name."""
     if not target:
@@ -38,7 +67,7 @@ def is_system_process(name: str) -> bool:
     return name in system_processes
 
 
-def classify_item(name: str) -> dict:
+def classify_item(name: str, *, is_web: bool | None = None) -> dict:
     """Classify a website or application into a category."""
 
     default_result = {
@@ -54,6 +83,20 @@ def classify_item(name: str) -> dict:
         return default_result
 
     name = name.lower().strip()
+    host = normalize_host(name)
+    if is_web is None:
+        is_web = bool(host) and not host.endswith((".exe", ".app", ".bin"))
+    web_tag = None
+    if is_web:
+        default_result["category"] = "Chưa phân loại"
+        labels = host.split(".")
+        for index in range(len(labels)):
+            domain = ".".join(labels[index:])
+            web_tag = next((tag for tag, domains in WEB_CATEGORIES.items() if domain in domains), None)
+            if web_tag:
+                break
+        if not web_tag and host.endswith((".edu", ".edu.vn")):
+            web_tag = "LEARNING"
 
     categories = {
         "LEARNING": {
@@ -130,7 +173,7 @@ def classify_item(name: str) -> dict:
     }
 
     for tag, config in categories.items():
-        if any(keyword in name for keyword in config["keywords"]):
+        if (is_web and tag == web_tag) or (not is_web and any(keyword in name for keyword in config["keywords"])):
             return {
                 "category": config["category"],
                 "tag": tag,

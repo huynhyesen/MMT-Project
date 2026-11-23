@@ -43,7 +43,6 @@ def get_active_app_metadata():
                 active_apps.append({
                     "app_name": p_name,
                     "domain": None,  # Nếu là trình duyệt, chỉ lọc tên miền (domain) an toàn
-                    "window_title": "",  # Tiêu đề cửa sổ (chỉ lấy tên, không lấy nội dung)
                 })
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass

@@ -1,20 +1,21 @@
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any
+from unicodedata import normalize
 
-# Từ điển và mẫu ngữ nghĩa phân loại nội dung AI đa ngôn ngữ (Tiếng Việt & Tiếng Anh)
+# Từ khóa và mẫu cảnh báo cho tiếng Việt và tiếng Anh.
 INAPPROPRIATE_LEXICON = {
     "ADULT": {
         "label": "Nội dung người lớn (18+ / Khiêu dâm)",
         "weight": 0.95,
         "keywords": [
-            "porn", "porno", "xxx", "sex", "hentai", "nsfw", "erotic", "nude", "naked",
-            "khiêu dâm", "đồi trụy", "gái gọi", "phim người lớn", "phim cấp 3", "tình dục",
+            "porn", "porno", "xxx", "hentai", "nsfw", "erotic", "sex video",
+            "khiêu dâm", "đồi trụy", "gái gọi", "phim người lớn", "phim cấp 3",
             "thủ dâm", "loạn luân", "lộ clip", "ảnh nóng", "khoả thân", "gái xinh cởi đồ",
             "show hàng", "kích dục", "mại dâm", "camshow", "xvideos", "pornhub", "xnxx",
             "redtube", "onlyfans"
         ],
         "patterns": [
-            r"\b(p[o0]rn|s[e3]x|xxx)\b",
+            r"\b(p[o0]rn|xxx)\b",
             r"(phim\s*(18\+|người\s*lớn|cấp\s*3))",
             r"(lộ\s*clip|ảnh\s*nóng|show\s*hàng)"
         ]
@@ -23,7 +24,7 @@ INAPPROPRIATE_LEXICON = {
         "label": "Cờ bạc & Cá cược trực tuyến",
         "weight": 0.90,
         "keywords": [
-            "casino", "bet", "betting", "poker", "baccarat", "roulette", "blackjack", "slot machine",
+            "casino", "betting", "poker", "baccarat", "roulette", "blackjack", "slot machine",
             "cá độ", "cá cược", "tài xỉu", "đá gà", "nổ hũ", "đánh bài đổi thưởng", "lô đề",
             "quay hũ", "bắn cá đổi tiền", "kubet", "thabet", "fun88", "w88", "188bet", "m88",
             "socvip", "sunwin", "go88", "rikvip", "b52 club"
@@ -38,7 +39,7 @@ INAPPROPRIATE_LEXICON = {
         "label": "Bạo lực, Máu me & Tự hại",
         "weight": 0.92,
         "keywords": [
-            "suicide", "kill myself", "blood", "beheading", "gore", "murder", "bomb making",
+            "suicide", "kill myself", "beheading", "gore video", "murder", "bomb making",
             "tự tử", "tự hại", "cắt cổ tay", "chém nhau", "đâm chém", "súng đạn", "chế tạo bom",
             "thuốc nổ", "máu me ghê rợn", "hành hạ dã man", "tự sát", "nhảy lầu"
         ],
@@ -56,24 +57,24 @@ INAPPROPRIATE_LEXICON = {
             "chết đi", "fuck you", "motherfucker", "bitch", "bastard", "nigger"
         ],
         "patterns": [
-            r"\b(đ[m|ụ|ịt]\s*(má|mẹ))\b",
-            r"\b(f[u|*]ck|b[i|*]tch)\b"
+            r"\bđ(?:m|ụ|ịt)\s*(má|mẹ)\b",
+            r"\b(f[u*]ck|b[i*]tch)\b"
         ]
     }
 }
 
 class AITextAnalyzer:
-    """Mô hình phân tích văn bản AI thời gian thực phát hiện nội dung độc hại."""
+    """Phân tích từ khóa tiếng Việt và tiếng Anh trong văn bản được cung cấp."""
 
     def __init__(self):
-        # Tiền biên dịch các biểu thức chính quy (Regex) để tăng tốc độ xử lý (< 1ms)
+        # Tiền biên dịch từ khóa theo ranh giới từ và các mẫu nhiều từ.
         self.compiled_rules = {}
         for category, info in INAPPROPRIATE_LEXICON.items():
-            compiled_pats = [re.compile(p, re.IGNORECASE) for p in info.get("patterns", [])]
+            keywords = (r"(?<!\w)" + re.escape(word.casefold()) + r"(?!\w)" for word in info["keywords"])
+            compiled_pats = [re.compile(pattern) for pattern in (*keywords, *info["patterns"])]
             self.compiled_rules[category] = {
                 "label": info["label"],
                 "weight": info["weight"],
-                "keywords": set(kw.lower() for kw in info["keywords"]),
                 "patterns": compiled_pats
             }
 
@@ -85,49 +86,36 @@ class AITextAnalyzer:
         if not text:
             return {"is_safe": True, "category": None, "confidence": 0.0, "reason": None}
 
-        clean_text = text.lower().strip()
+        clean_text = " ".join(normalize("NFC", text).casefold().split())
         matched_categories = []
 
         for category, data in self.compiled_rules.items():
-            detected_keywords = []
-            
-            # 1. So khớp từ khóa trực tiếp
-            for kw in data["keywords"]:
-                if kw in clean_text:
-                    detected_keywords.append(kw)
-
-            # 2. So khớp biểu thức Regex
-            for pat in data["patterns"]:
-                if pat.search(clean_text):
-                    detected_keywords.append(pat.pattern)
-
-            if detected_keywords:
+            if any(pattern.search(clean_text) for pattern in data["patterns"]):
                 matched_categories.append({
                     "category": category,
                     "label": data["label"],
-                    "confidence": min(0.99, data["weight"] + len(detected_keywords) * 0.02),
-                    "matches": detected_keywords[:3]
+                    "confidence": data["weight"],
                 })
 
         if matched_categories:
-            # Chọn loại vi phạm có độ tin cậy cao nhất
+            # Ưu tiên nhóm quy tắc có trọng số cao nhất khi có nhiều nhóm khớp.
             matched_categories.sort(key=lambda x: x["confidence"], reverse=True)
             top = matched_categories[0]
-            reason = f"Phát hiện {top['label']} qua từ khóa/mẫu: {', '.join(top['matches'])}"
+            reason = f"Văn bản khớp quy tắc cảnh báo về {top['label']}."
             return {
                 "is_safe": False,
                 "category": top["category"],
                 "label": top["label"],
                 "confidence": round(top["confidence"], 2),
                 "reason": reason,
-                "suggested_action": "BLOCK_AND_CLOSE"
+                "suggested_action": "WARN"
             }
 
         return {
             "is_safe": True,
             "category": None,
-            "label": "Nội dung an toàn",
-            "confidence": 0.98,
+            "label": "Chưa có dấu hiệu khớp quy tắc",
+            "confidence": 0.0,
             "reason": None,
             "suggested_action": "ALLOW"
         }
