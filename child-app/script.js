@@ -11,6 +11,7 @@ let socketRetry;
 const API_BASE = location.origin;
 let clockTimezone = "Asia/Ho_Chi_Minh";
 let clockFormatter = createClockFormatter(clockTimezone);
+let serverClock;
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
         let ws = null;
@@ -181,8 +182,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
 
         function updateClock() {
             const clockEl = document.getElementById("realtime-clock");
-            if (clockEl) {
-                clockEl.textContent = clockFormatter.format(new Date());
+            if (clockEl && serverClock) {
+                clockEl.textContent = clockFormatter.format(serverClock.time + performance.now() - serverClock.receivedAt);
                 clockEl.title = clockTimezone === "Asia/Ho_Chi_Minh" ? "Giờ Việt Nam (UTC+7)" : clockTimezone;
             }
         }
@@ -298,6 +299,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 fetchUsageStats();
             } else if (type === "CURFEW_UPDATED") {
                 fetchUsageStats();
+                if (currentChild) connectWebTracking();
             } else if (type === "DAILY_RESET_TRIGGERED" || type === "DAILY_RESET") {
                 showToast("🌅 Chào ngày mới! Thời gian đã được làm mới tự động.", "emerald");
                 countdownSeconds = -1;
@@ -698,28 +700,18 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         // --- BIỂU ĐỒ THÂN THIỆN CHO TRẺ ---
         let childChart = null;
 
-        function updateChildChart(learning, entertainment, social, unclassified, adult) {
+        function updateChildChart(categories) {
             const ctx = document.getElementById("childUsageChart");
             if (!ctx) return;
-            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0) + adult;
-            const legendEl = document.getElementById("child-chart-legend");
-            if (legendEl) {
-                if (total === 0) {
-                    legendEl.textContent = "Chưa có hoạt động hôm nay";
-                } else {
-                    legendEl.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>${adult ? ` • 18+ <b>${formatUsageSeconds(adult)}</b>` : ''}`;
-                }
+            const hasUsage = categories.length > 0;
+            const legend = document.getElementById("child-chart-legend");
+            if (legend) {
+                legend.textContent = hasUsage ? formatUsageBreakdown(categories) : "Chưa có hoạt động hôm nay";
             }
 
-            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0, unclassified || 0];
-            const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6', '#64748b'];
-            const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội', 'Chưa phân loại'];
-
-            if (adult) {
-                dataValues.push(adult);
-                bgColors.push('#9f1239');
-                labels.push('Nội dung 18+');
-            }
+            const dataValues = hasUsage ? categories.map(category => category.seconds) : [1];
+            const bgColors = hasUsage ? categories.map(category => category.color) : ["#e2e8f0"];
+            const labels = hasUsage ? categories.map(category => category.label) : ["Chưa dùng"];
 
             if (childChart) {
                 childChart.data.datasets[0].data = dataValues;
@@ -829,13 +821,17 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         async function fetchUsageStats() {
             const requestId = ++usageRequestId;
             try {
-                const res = await fetch(`${API_BASE}/usage-stats/`);
+                const res = await fetch(`${API_BASE}/usage-stats/`, { cache: "no-store" });
                 if (!res.ok) return;
                 const data = await res.json();
                 if (requestId !== usageRequestId) return;
                 if (data.timezone && data.timezone !== clockTimezone) {
                     clockFormatter = createClockFormatter(data.timezone);
                     clockTimezone = data.timezone;
+                }
+                const serverTime = Date.parse(data.server_time);
+                if (Number.isFinite(serverTime)) {
+                    serverClock = { time: serverTime, receivedAt: performance.now() };
                     updateClock();
                 }
 
@@ -852,13 +848,12 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 document.getElementById("quick-ent-time").textContent = entStr;
                 document.getElementById("quick-soc-time").textContent = socStr;
 
-                updateChildChart(
-                    data.learning_seconds ?? (data.learning_minutes || 0) * 60,
-                    data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
-                    data.social_seconds ?? (data.social_minutes || 0) * 60,
-                    data.unclassified_seconds ?? 0,
-                    data.adult_seconds ?? 0
-                );
+                const categories = usageCategories(data);
+                updateChildChart(categories);
+                const extraUsage = document.getElementById("summary-extra-usage");
+                const extraCategories = categories.filter(category => ["UTILITY", "OTHER", "ADULT"].includes(category.tag));
+                extraUsage.textContent = formatUsageBreakdown(extraCategories);
+                extraUsage.classList.toggle("hidden", extraCategories.length === 0);
 
                 const totalMins = data.total_minutes || 0;
                 document.getElementById("summary-used-time").textContent = data.total_formatted || "0 phút";
@@ -900,14 +895,14 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
 
                 // Giờ giới nghiêm Bedtime
                 const bedtimeBanner = document.getElementById("bedtime-banner");
-                const bHour = data.bedtime_hour || "22:00";
-                const wHour = data.wakeup_hour || "06:00";
+                const bHour = data.bedtime_hour;
+                const wHour = data.wakeup_hour;
                 const bHourEl = document.getElementById("bedtime-hour-text");
                 const wHourEl = document.getElementById("wakeup-hour-text");
                 const badgeEl = document.getElementById("bedtime-badge-text");
                 if (bHourEl) bHourEl.textContent = bHour;
                 if (wHourEl) wHourEl.textContent = wHour;
-                if (badgeEl) badgeEl.textContent = `Khóa: ${bHour} → Mở: ${wHour}`;
+                if (badgeEl) badgeEl.textContent = bHour === wHour ? "Giờ giới nghiêm đang tắt" : `Giới nghiêm ${bHour}–${wHour}`;
 
                 if (data.is_bedtime) {
                     bedtimeBanner.classList.remove("hidden");

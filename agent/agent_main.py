@@ -236,7 +236,7 @@ async def monitor_apps_task():
 
         await asyncio.sleep(poll_interval)
 
-async def listen_to_server():
+async def listen_to_server(curfew_changed):
     """Tác vụ kết nối WebSocket / Cloud Relay (Hỗ trợ cả LAN và WAN)."""
     global time_limit_locked
     while True:
@@ -275,6 +275,8 @@ async def listen_to_server():
                         print("🔓 [AGENT] Nhận lệnh mở khóa máy từ Phụ huynh!")
                         time_limit_locked = False
                         hide_kiosk_lock()
+                    elif msg_type == "CURFEW_UPDATED":
+                        curfew_changed.set()
 
                     try:
                         
@@ -311,7 +313,7 @@ async def listen_to_server():
 bedtime_locked = False
 time_limit_locked = False
 
-async def check_bedtime_task():
+async def check_bedtime_task(curfew_changed):
     """Tác vụ kiểm tra định kỳ khung giờ giới nghiêm (Bedtime Mode) & Hạn mức giờ sử dụng."""
     global bedtime_locked, time_limit_locked, BACKEND_HTTP
     while True:
@@ -356,7 +358,11 @@ async def check_bedtime_task():
                         hide_kiosk_lock()
         except Exception:
             pass
-        await asyncio.sleep(15)
+        try:
+            await asyncio.wait_for(curfew_changed.wait(), timeout=15)
+        except TimeoutError:
+            pass
+        curfew_changed.clear()
 
 async def main():
     try:
@@ -377,10 +383,11 @@ async def main():
 
         if not sync_allowed_rules():
             block_websites(BLOCKED_DOMAINS)
+        curfew_changed = asyncio.Event()
         await asyncio.gather(
             monitor_apps_task(),
-            listen_to_server(),
-            check_bedtime_task()
+            listen_to_server(curfew_changed),
+            check_bedtime_task(curfew_changed)
         )
     finally:
         cleanup_agent()

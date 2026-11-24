@@ -214,8 +214,20 @@ def test_curfew_defaults_to_vietnam_and_honors_saved_timezone(parent_credentials
         with (
             TestClient(main.app, headers=basic(parent_credentials)) as parent,
             TestClient(main.app) as agent,
+            TestClient(main.app) as child,
         ):
-            enroll(parent, agent, "Curfew test", "mmt-test-curfew")
+            profile, credential = enroll(parent, agent, "Curfew test", "mmt-test-curfew")
+            device_id, token = credential.split(".")
+            assert child.post("/children/login", headers={
+                "Authorization": f"Bearer {device_id}.{security.dashboard_key(token)}",
+            }, json={"child_id": profile["id"], "pin": "2580"}).status_code == 200
+            web_token = child.get("/web-tracking/session").json()["token"]
+
+            def browser_restriction():
+                response = child.get("/web-tracking/policy", headers={"Authorization": f"Bearer {web_token}"})
+                assert response.status_code == 200
+                return response.json()["restriction"]
+
             rule = parent.post("/rules/", json={
                 "rule_type": "WEBSITE", "target_value": "lesson.example", "action": "ALLOW",
             })
@@ -231,18 +243,24 @@ def test_curfew_defaults_to_vietnam_and_honors_saved_timezone(parent_credentials
             assert agent.post("/check-permission/", json=website).json()["is_curfew"] is True
             schedule = {"bedtime": "00:55", "wakeup_time": "06:00"}
             assert parent.post("/curfew/", json=schedule).json()["timezone"] == "Asia/Tokyo"
-            result = parent.post("/curfew/", json={**schedule, "timezone": "Asia/Ho_Chi_Minh"})
-            assert result.status_code == 200, result.text
+            with agent.websocket_connect("/ws/relay/mmt-test-curfew") as socket:
+                result = parent.post("/curfew/", json={**schedule, "timezone": "Asia/Ho_Chi_Minh"})
+                assert result.status_code == 200, result.text
+                assert socket.receive_json() == {"type": "CURFEW_UPDATED", **result.json()}
             assert result.json() == {
                 "bedtime": "00:55",
                 "wakeup_time": "06:00",
                 "timezone": "Asia/Ho_Chi_Minh",
                 "current_time": "23:45",
+                "server_time": "2026-11-20T16:45:00Z",
                 "is_within_curfew": False,
             }
             assert agent.post("/check-permission/", json=website).json()["allowed"] is True
-            assert agent.get("/usage-stats/").json()["is_bedtime"] is False
-            assert agent.get("/usage-stats/").json()["timezone"] == "Asia/Ho_Chi_Minh"
+            stats = agent.get("/usage-stats/").json()
+            assert stats["is_bedtime"] is False
+            assert stats["timezone"] == result.json()["timezone"]
+            assert stats["server_time"] == result.json()["server_time"]
+            assert browser_restriction() is None
             assert agent.get("/devices/mmt-test-curfew/config").json()["bedtime"] == "00:55"
             assert parent.get("/onboarding/config").json()["bedtime"] == "00:55"
 
@@ -253,8 +271,18 @@ def test_curfew_defaults_to_vietnam_and_honors_saved_timezone(parent_credentials
             assert blocked["is_curfew"] is True
             assert "00:55" in blocked["reason"]
             assert agent.get("/usage-stats/").json()["is_bedtime"] is True
+            assert browser_restriction() == "curfew"
             instant = datetime(2026, 11, 20, 23, 0, tzinfo=timezone.utc)
             assert agent.post("/check-permission/", json=website).json()["allowed"] is True
+            assert browser_restriction() is None
+
+            assert parent.post("/curfew/", json={"bedtime": "23:55", "wakeup_time": "06:30"}).status_code == 200
+            instant = datetime(2026, 11, 21, 16, 54, tzinfo=timezone.utc)
+            assert browser_restriction() is None
+            instant = datetime(2026, 11, 21, 16, 55, tzinfo=timezone.utc)
+            assert browser_restriction() == "curfew"
+            instant = datetime(2026, 11, 21, 23, 30, tzinfo=timezone.utc)
+            assert browser_restriction() is None
 
             assert parent.post("/curfew/", json={"bedtime": "24:55"}).status_code == 422
             assert parent.post("/curfew/", json={"timezone": "Invalid/Zone"}).status_code == 422

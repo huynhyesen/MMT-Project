@@ -1441,6 +1441,7 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         bedtime_hour=curfew.bedtime,
         wakeup_hour=curfew.wakeup_time,
         timezone=curfew.timezone,
+        server_time=curfew.server_time,
         child_name=child_name,
         daily_limit_minutes=child_daily_limit,
         remaining_minutes=child_remaining,
@@ -1464,7 +1465,7 @@ async def update_curfew(req: schemas.CurfewUpdateRequest, db: Session = Depends(
     db.commit()
 
     curfew = current_curfew(db)
-    await manager.broadcast_json({"type": "CURFEW_UPDATED", **curfew.model_dump()})
+    await manager.broadcast_json({"type": "CURFEW_UPDATED", **curfew.model_dump(mode="json")})
     return curfew
 
 

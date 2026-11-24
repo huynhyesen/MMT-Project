@@ -47,6 +47,7 @@ def current_curfew(db):
         wakeup_time=wakeup.zfill(5),
         timezone=timezone_name,
         current_time=now.strftime("%H:%M"),
+        server_time=now.astimezone(timezone.utc),
         is_within_curfew=is_within_curfew(bedtime, wakeup, now),
     )
 
