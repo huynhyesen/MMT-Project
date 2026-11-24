@@ -698,22 +698,28 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         // --- BIỂU ĐỒ THÂN THIỆN CHO TRẺ ---
         let childChart = null;
 
-        function updateChildChart(learning, entertainment, social, unclassified) {
+        function updateChildChart(learning, entertainment, social, unclassified, adult) {
             const ctx = document.getElementById("childUsageChart");
             if (!ctx) return;
-            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0);
+            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0) + adult;
             const legendEl = document.getElementById("child-chart-legend");
             if (legendEl) {
                 if (total === 0) {
                     legendEl.textContent = "Chưa có hoạt động hôm nay";
                 } else {
-                    legendEl.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>`;
+                    legendEl.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>${adult ? ` • 18+ <b>${formatUsageSeconds(adult)}</b>` : ''}`;
                 }
             }
 
             const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0, unclassified || 0];
             const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6', '#64748b'];
             const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội', 'Chưa phân loại'];
+
+            if (adult) {
+                dataValues.push(adult);
+                bgColors.push('#9f1239');
+                labels.push('Nội dung 18+');
+            }
 
             if (childChart) {
                 childChart.data.datasets[0].data = dataValues;
@@ -850,7 +856,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                     data.learning_seconds ?? (data.learning_minutes || 0) * 60,
                     data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
                     data.social_seconds ?? (data.social_minutes || 0) * 60,
-                    data.unclassified_seconds ?? 0
+                    data.unclassified_seconds ?? 0,
+                    data.adult_seconds ?? 0
                 );
 
                 const totalMins = data.total_minutes || 0;
@@ -932,8 +939,8 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                             </span>
                         </td>
                         <td class="py-2.5 font-medium text-slate-600">${item.duration_formatted}</td>
-                        <td class="py-2.5 text-slate-500">${item.time_limit_minutes > 0 ? item.time_limit_minutes + ' phút' : 'Không GH'}</td>
-                        <td class="py-2.5 font-bold ${item.is_expired ? 'text-rose-600' : (item.remaining_minutes <= 15 ? 'text-amber-600' : 'text-emerald-600')}">
+                        <td class="py-2.5 text-slate-500">${item.tag === 'ADULT' ? '—' : (item.time_limit_minutes > 0 ? item.time_limit_minutes + ' phút' : 'Không GH')}</td>
+                        <td class="py-2.5 font-bold ${item.tag === 'ADULT' || item.is_expired ? 'text-rose-600' : (item.remaining_minutes <= 15 ? 'text-amber-600' : 'text-emerald-600')}">
                             ${item.remaining_formatted}
                         </td>
                     </tr>

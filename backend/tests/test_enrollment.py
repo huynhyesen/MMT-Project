@@ -275,6 +275,51 @@ def test_content_check_distinguishes_domain_policy_and_supplied_text(parent_cred
         assert check(text_content="Hướng dẫn cá cược trực tuyến").json()["suggested_action"] == "WARN"
 
 
+def test_report_labels_vnoi_and_previously_recorded_adult_usage(parent_credentials):
+    with (
+        TestClient(main.app, headers=basic(parent_credentials)) as parent,
+        TestClient(main.app) as agent,
+        TestClient(main.app) as child,
+        TestClient(main.app) as extension,
+    ):
+        profile, credential = enroll(parent, agent, "Domain reporting test", "mmt-test-domain-report")
+        device_id, token = credential.split(".")
+        assert child.post("/children/login", headers={
+            "Authorization": f"Bearer {device_id}.{security.dashboard_key(token)}",
+        }, json={"child_id": profile["id"], "pin": "2580"}).status_code == 200
+        session = child.get("/web-tracking/session").json()
+        extension.headers["Authorization"] = f"Bearer {session['token']}"
+
+        adult_host = "hihisex.men"
+        learning_host = "oj.vnoi.info"
+        with database.SessionLocal() as db:
+            db.add(models.MinimalTelemetryLog(
+                device_id=device_id, app_name=adult_host, domain=adult_host, duration_seconds=9,
+            ))
+            db.commit()
+
+        def submit_usage(host):
+            return extension.post("/web-tracking/usage", json={"host": host, "duration_seconds": 17})
+
+        assert submit_usage(adult_host).status_code == 403
+        assert submit_usage(learning_host).status_code == 201
+        assert extension.post("/web-tracking/alert", json={"host": adult_host}).status_code == 200
+        assert any(
+            alert["target_value"] == adult_host and alert["category"] == "ADULT_WEBSITE"
+            for alert in parent.get("/alerts/").json()
+        )
+
+        report = parent.get(f"/usage-stats/?child_id={profile['id']}").json()
+        items = {item["app_name"]: item for item in report["items"]}
+        assert items[adult_host]["category"] == "Nội dung 18+"
+        assert items[adult_host]["remaining_formatted"] == "Chặn theo bộ lọc"
+        assert items[learning_host]["tag"] == "LEARNING"
+        assert report["adult_seconds"] == 9
+        assert report["learning_seconds"] == 17
+        assert report["unclassified_seconds"] == 0
+        assert report["total_seconds"] == 26
+
+
 def test_youtube_approval_counts_as_entertainment(parent_credentials, monkeypatch, tmp_path):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker

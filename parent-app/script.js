@@ -418,22 +418,28 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         let parentChart = null;
 
-        function updateParentChart(learning, entertainment, social, unclassified) {
+        function updateParentChart(learning, entertainment, social, unclassified, adult) {
             const ctx = document.getElementById("parentUsageChart");
             if (!ctx) return;
-            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0);
+            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0) + adult;
             const legendText = document.getElementById("chart-legend-text");
             if (legendText) {
                 if (total === 0) {
                     legendText.innerText = "Chưa có hoạt động hôm nay";
                 } else {
-                    legendText.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>`;
+                    legendText.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>${adult ? ` • 18+ <b>${formatUsageSeconds(adult)}</b>` : ''}`;
                 }
             }
 
             const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0, unclassified || 0];
             const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6', '#64748b'];
             const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội', 'Chưa phân loại'];
+
+            if (adult) {
+                dataValues.push(adult);
+                bgColors.push('#9f1239');
+                labels.push('Nội dung 18+');
+            }
 
             if (parentChart) {
                 parentChart.data.datasets[0].data = dataValues;
@@ -500,7 +506,8 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                     data.learning_seconds ?? (data.learning_minutes || 0) * 60,
                     data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
                     data.social_seconds ?? (data.social_minutes || 0) * 60,
-                    data.unclassified_seconds ?? 0
+                    data.unclassified_seconds ?? 0,
+                    data.adult_seconds ?? 0
                 );
 
                 cachedUsageItems = data.items || [];
@@ -541,9 +548,10 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             items.forEach(item => {
                 const row = document.createElement("div");
                 
+                const isAdult = item.tag === "ADULT";
                 let remColor = "text-emerald-700 bg-emerald-50 border-emerald-200";
                 let barColor = "bg-emerald-600";
-                if (item.is_expired) {
+                if (isAdult || item.is_expired) {
                     remColor = "text-rose-700 bg-rose-50 border-rose-300 font-bold";
                     barColor = "bg-rose-500";
                 } else if (item.remaining_minutes <= 15 && item.time_limit_minutes > 0) {
@@ -563,16 +571,16 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                             <span class="text-slate-500">Đã dùng: <strong>${item.duration_formatted}</strong></span>
                             <span>•</span>
                             <span class="text-[11px] px-2.5 py-0.5 rounded-full border ${remColor}">
-                                ${item.is_expired ? '🛑 Đã hết giờ (0p)' : '⏳ ' + item.remaining_formatted}
+                                ${item.is_expired ? '🛑 Đã hết giờ (0p)' : item.remaining_formatted}
                             </span>
-                            <button data-argument="${escapeHtml(item.app_name)}" onclick="openLimitModal(this.dataset.argument, ${item.time_limit_minutes})" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 bg-white border border-blue-200 rounded-lg shadow-xs">
+                            ${isAdult ? "" : `<button data-argument="${escapeHtml(item.app_name)}" onclick="openLimitModal(this.dataset.argument, ${item.time_limit_minutes})" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 bg-white border border-blue-200 rounded-lg shadow-xs">
                                 ⚙️ Đặt hạn mức
-                            </button>
+                            </button>`}
                         </div>
                     </div>
                     
                     <div class="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-200/50">
-                        <div class="flex items-center gap-1 text-[11px] text-slate-500">
+                        ${isAdult ? "" : `<div class="flex items-center gap-1 text-[11px] text-slate-500">
                             <span>⚡ Tự điền nhanh:</span>
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 30)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">30p</button>
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 45)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">45p</button>
@@ -580,7 +588,7 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 90)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">90p</button>
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 120)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">120p</button>
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 0)" class="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-semibold text-slate-500">Không GH</button>
-                        </div>
+                        </div>`}
                         <div class="flex items-center gap-2 flex-1 max-w-xs">
                             <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden flex-1">
                                 <div class="${barColor} h-full rounded-full transition-all" style="width: ${item.percentage}%"></div>

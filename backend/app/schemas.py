@@ -77,6 +77,7 @@ class UsageStatsResponse(BaseModel): #default
     utilities_minutes: int
     utilities_seconds: int = 0
     unclassified_seconds: int = 0
+    adult_seconds: int = 0
     utilities_formatted: str
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
