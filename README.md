@@ -10,7 +10,7 @@ MMT giúp phụ huynh quản lý thời gian sử dụng máy tính của trẻ 
 | Góc Của Con | Đăng nhập bằng PIN, xem thời gian còn lại, mở web và gửi yêu cầu khi gặp giới hạn, xin thêm giờ hoặc xin mở web và ứng dụng, xem phản hồi và lịch sử yêu cầu. |
 | Agent máy con | Đồng bộ quy tắc, ghi nhận hoạt động ứng dụng, chặn ứng dụng theo quy tắc và khóa màn hình khi đến giờ giới nghiêm hoặc hết hạn mức ngày. Khi máy con đang kết nối, phụ huynh có thể khóa, mở khóa hoặc gửi lời nhắn tới máy đã chọn. |
 | Tiện ích Chrome/Edge | Duyệt web tự do có lọc, đếm giờ tab đang sử dụng, chặn và cảnh báo tên miền 18+ trong danh sách lọc. |
-| Backend | Lưu hồ sơ, yêu cầu và dữ liệu sử dụng trong SQLite, tách báo cáo theo thiết bị và đặt lại bộ đếm khi sang ngày mới theo giờ của máy chủ. |
+| Backend | Lưu hồ sơ, yêu cầu và dữ liệu sử dụng trong SQLite, tách báo cáo theo thiết bị và đặt lại bộ đếm lúc 00:00 theo múi giờ áp dụng. Mặc định là giờ Việt Nam (UTC+7). |
 
 ## Chuẩn bị
 
@@ -74,17 +74,19 @@ Web thông thường và tên miền chưa phân loại được mở ngay. Trê
 
 Đồng hồ trong **Góc Của Con** hiển thị thời gian Backend đã ghi nhận và làm mới định kỳ. Agent chỉ đo ứng dụng đang ở tiền cảnh khi người dùng vừa thao tác. Chrome và Edge được đo theo tab bằng tiện ích. Trên Linux, việc ghi giờ ứng dụng cần phiên X11 với `xprop` và `xprintidle`; phiên Wayland vẫn có thể ghi giờ web bằng tiện ích.
 
-Tiện ích đo thời gian khi tab được chọn và cửa sổ trình duyệt có tiêu điểm. Video đang phát có tiếng vẫn được tính trong tab hiển thị khi trẻ rời chuột và bàn phím. Báo cáo chỉ lưu tên miền và số giây. Trang chưa nhận diện được được xếp vào **Chưa phân loại**.
+Tiện ích đo thời gian khi tab được chọn và cửa sổ trình duyệt có tiêu điểm. Video đang phát có tiếng vẫn được tính trong tab hiển thị khi trẻ rời chuột và bàn phím. Báo cáo lưu tên miền và số giây. Ví dụ, `youtube.com` và `m.youtube.com` thuộc nhóm **Giải trí & Game**. Tên miền ngoài danh sách phân loại được xếp vào **Chưa phân loại**.
 
 Tên miền 18+ thuộc bộ lọc bị chặn trước khi tải. Trang thông báo cho trẻ biết lý do và dashboard phụ huynh nhận cảnh báo có tên miền, hồ sơ và thời điểm. Các lần thử lại trên cùng tên miền trong vòng 5 phút được gộp. Tiện ích cần một phiên Góc Của Con đã đăng nhập để gửi cảnh báo. Bộ lọc áp dụng theo tên miền, nên nội dung 18+ bên trong một nền tảng thông thường có thể lọt qua.
 
 Máy phụ huynh có thể đặt `MMT_ADULT_DOMAINS_FILE` trỏ tới một file UTF-8 với mỗi tên miền trên một dòng. Backend đọc lại file định kỳ và gửi danh sách bổ sung cho tiện ích. Có thể cập nhật file từ một nguồn đã kiểm duyệt mà không gửi lịch sử duyệt web ra ngoài MMT. File hỗ trợ tối đa 10.000 tên miền và dung lượng tối đa khoảng 1 MiB.
 
+Agent áp dụng quy tắc ứng dụng theo tên tiến trình, ví dụ `RobloxPlayerBeta.exe` hoặc `roblox`. API `/ai/content-check` kiểm tra tên miền và cảnh báo khi văn bản được gửi vào khớp từ khóa. Phiên bản hiện tại chưa có mô hình AI quét nội dung trang, hình ảnh hoặc màn hình của trẻ.
+
 ### 4. Đặt giờ giới nghiêm
 
-Trong dashboard phụ huynh, mở **Giờ giới nghiêm**, nhập giờ bắt đầu, giờ kết thúc và múi giờ rồi bấm lưu. Ví dụ tại Việt Nam, chọn `Asia/Ho_Chi_Minh`. Nhập `00:55` cho 12 giờ 55 phút đêm. Khung `00:55–06:00` bắt đầu lúc 00:55 và kết thúc đúng lúc 06:00. Dashboard hiển thị giờ mà app dùng để kiểm tra.
+Trong dashboard phụ huynh, mở **Giờ giới nghiêm**, nhập giờ bắt đầu và kết thúc rồi bấm lưu. **Múi giờ áp dụng** mặc định là Việt Nam (`Asia/Ho_Chi_Minh`, UTC+7). Nhập `00:55` cho 12 giờ 55 phút đêm. Khung `00:55–06:00` bắt đầu lúc 00:55 và kết thúc đúng lúc 06:00.
 
-Sau khi cập nhật từ phiên bản cũ, hãy lưu lại khung giờ một lần để ghi nhận múi giờ. Cấu hình cũ chưa có múi giờ sẽ tiếp tục dùng đồng hồ của máy chủ cho đến khi lưu.
+Giờ giới nghiêm, hạn mức và báo cáo trong ngày đều theo múi giờ áp dụng. Cấu hình cũ chưa có múi giờ tự động dùng giờ Việt Nam. Múi giờ đã lưu vẫn được giữ. Để chuyển một cấu hình cũ về giờ Việt Nam, chọn `Asia/Ho_Chi_Minh` rồi lưu.
 
 ## Cập nhật và khôi phục
 

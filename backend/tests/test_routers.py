@@ -400,6 +400,44 @@ def test_daily_rollover_and_usage_reset(tmp_path):
         engine.dispose()
 
 
+def test_rollover_and_usage_at_vietnam_midnight(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from app.services import curfew
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'vietnam-midnight.db'}")
+    models.Base.metadata.create_all(bind=engine)
+    instant = datetime(2026, 11, 20, 16, 59, 59, tzinfo=timezone.utc)
+
+    def clock(timezone_name):
+        return instant.astimezone(ZoneInfo(timezone_name))
+
+    monkeypatch.setattr(main, "curfew_clock", clock)
+    monkeypatch.setattr(curfew, "curfew_clock", clock)
+    try:
+        with database.SessionLocal(bind=engine) as db:
+            db.add(models.DailyRollover(id=1, day="2026-11-20"))
+            db.add(models.MinimalTelemetryLog(
+                app_name="example.org", duration_seconds=40, timestamp=instant.replace(tzinfo=None),
+            ))
+            db.commit()
+            assert main.web_usage_seconds(db, None) == {"example.org": 40}
+            assert not main.perform_daily_reset(db, automatic=True)
+
+            instant = datetime(2026, 11, 20, 17, 0, tzinfo=timezone.utc)
+            assert main.web_usage_seconds(db, None) == {}
+            db.add(models.MinimalTelemetryLog(
+                app_name="example.org", duration_seconds=10, timestamp=instant.replace(tzinfo=None),
+            ))
+            db.commit()
+            assert main.perform_daily_reset(db, automatic=True)
+            assert main.web_usage_seconds(db, None) == {"example.org": 10}
+            assert db.query(models.MinimalTelemetryLog).count() == 1
+    finally:
+        engine.dispose()
+
+
 def test_reset_usage_endpoint(client, mock_db, monkeypatch):
     rule = models.AppWebRule(used_minutes=45)
     mock_db.query_results[models.AppWebRule] = [rule]

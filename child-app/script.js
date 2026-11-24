@@ -9,6 +9,8 @@ function enrollmentHeaders() {
 let socketRetry;
 
 const API_BASE = location.origin;
+let clockTimezone = "Asia/Ho_Chi_Minh";
+let clockFormatter = createClockFormatter(clockTimezone);
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
         let ws = null;
@@ -171,11 +173,18 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
         }
 
         // --- ĐỒNG HỒ THỜI GIAN THỰC ---
+        function createClockFormatter(timeZone) {
+            return new Intl.DateTimeFormat("vi-VN", {
+                timeZone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+            });
+        }
+
         function updateClock() {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('vi-VN', { hour12: false });
-            const clockEl = document.getElementById('realtime-clock');
-            if (clockEl) clockEl.textContent = timeStr;
+            const clockEl = document.getElementById("realtime-clock");
+            if (clockEl) {
+                clockEl.textContent = clockFormatter.format(new Date());
+                clockEl.title = clockTimezone === "Asia/Ho_Chi_Minh" ? "Giờ Việt Nam (UTC+7)" : clockTimezone;
+            }
         }
         setInterval(updateClock, 1000);
         updateClock();
@@ -275,14 +284,14 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 fetchUsageStats();
             } else if (type === "AI_CONTENT_VIOLATION") {
                 playNotificationSound('alert');
-                showDesktopNotification("🤖 AI Content Filter!", `Nội dung "${data.source || 'Cửa sổ'}" đã bị tạm dừng.`);
+                showDesktopNotification("Cảnh báo nội dung", data.source || "Cảnh báo từ Agent");
                 const alertEl = document.getElementById("ai-content-alert");
                 if (alertEl) {
-                    document.getElementById("ai-alert-title").innerText = `🤖 AI FILTER: NỘI DUNG "${data.source || 'Cửa sổ'}" ĐÃ BỊ CHẶN!`;
-                    document.getElementById("ai-alert-desc").innerText = data.reason || "Hệ thống AI vừa phát hiện nội dung có thể không phù hợp với lứa tuổi của con.";
+                    document.getElementById("ai-alert-title").innerText = `Cảnh báo nội dung · ${data.source || 'Cửa sổ'}`;
+                    document.getElementById("ai-alert-desc").innerText = data.reason || "Agent đã gửi cảnh báo nội dung.";
                     alertEl.classList.remove("hidden");
                 }
-                showToast(`🤖 AI Content Filter vừa chặn: ${data.source || 'nội dung vi phạm'}`, "rose");
+                showToast(`Cảnh báo nội dung: ${data.source || 'nội dung vi phạm'}`, "rose");
             } else if (type === "CHILD_SWITCHED" || type === "PROFILES_UPDATED") {
                 countdownSeconds = -1;
                 fetchActiveChild();
@@ -818,6 +827,11 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
                 if (!res.ok) return;
                 const data = await res.json();
                 if (requestId !== usageRequestId) return;
+                if (data.timezone && data.timezone !== clockTimezone) {
+                    clockFormatter = createClockFormatter(data.timezone);
+                    clockTimezone = data.timezone;
+                    updateClock();
+                }
 
                 // Thống kê nhanh theo danh mục
                 const learnStr = data.learning_formatted || "0 phút";

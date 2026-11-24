@@ -44,46 +44,48 @@ def enforce_block_policy(target_name: str, reason: str, author: str):
     print("="*50 + "\n")
     return False
 
+PROTECTED_PROCESSES = {
+    "system", "registry", "idle", "smss", "csrss", "wininit", "winlogon", "logonui",
+    "services", "lsass", "svchost", "bash", "sh", "uvicorn", "systemd",
+    "xorg", "gnome-shell", "agent_main",
+}
+APP_ALIASES = {
+    "roblox": {"robloxplayerbeta", "robloxplayerlauncher"},
+    "word": {"winword"},
+    "powerpoint": {"powerpnt"},
+}
+
+
+def process_key(name):
+    return name.strip().lower().removesuffix(".exe")
+
+
+def matches_app_rule(process, rule):
+    name, target = process_key(process), process_key(rule)
+    return bool(name and target) and (name == target or name in APP_ALIASES.get(target, ()))
+
+
 def kill_blocked_process(process_target: str):
-    """
-    Tìm và buộc dừng (kill) tiến trình nếu phát hiện ứng dụng bị cấm đang chạy qua psutil.
-    Hỗ trợ kiểm tra cả tên tiến trình (name) và dòng lệnh khởi chạy (cmdline).
-    """
-    killed = False
-    target = process_target.lower().strip()
-    if not target:
+    """Close instances of the selected executable by exact name."""
+    target = process_key(process_target)
+    if not target or target in PROTECTED_PROCESSES or target.startswith("python"):
         return False
 
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+    killed = False
+    for proc in psutil.process_iter(["pid", "name"]):
+        if proc.info["pid"] == os.getpid() or process_key(proc.info["name"] or "") != target:
+            continue
         try:
-            p_name = (proc.info.get('name') or "").lower()
-            cmdline = " ".join(proc.info.get('cmdline') or []).lower()
-
-            # Không bao giờ diệt nhầm các tiến trình hệ điều hành / runtime
-            safe_system = ["python", "uvicorn", "bash", "systemd", "xorg", "gnome", "code", "vscode", "ssh", "agent"]
-            if any(s in p_name for s in safe_system) and not any(target == s for s in [target]):
-                continue
-
-            target_clean = target.replace(".exe", "")
-            matches = (
-                p_name == target or 
-                p_name == f"{target_clean}.exe" or 
-                target_clean in p_name or 
-                target_clean in cmdline
-            )
-
-            if matches:
-                p = psutil.Process(proc.info['pid'])
-                p.terminate()
-                try:
-                    p.wait(timeout=1)
-                except psutil.TimeoutExpired:
-                    p.kill()
-                killed = True
-                print(f"🛑 [BLOCKER] Đã đóng tiến trình vi phạm (PID {proc.info['pid']}): {p_name}")
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except psutil.TimeoutExpired:
+                proc.kill()
+            killed = True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     return killed
+
 
 def block_websites(website_list: list):
     """

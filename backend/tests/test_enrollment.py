@@ -186,7 +186,7 @@ def test_approved_web_usage_and_adult_blocking(parent_credentials):
         assert parent.delete(f"/children/{child['id']}").status_code == 200
 
 
-def test_curfew_uses_saved_timezone_for_web_access(parent_credentials, monkeypatch, tmp_path):
+def test_curfew_defaults_to_vietnam_and_honors_saved_timezone(parent_credentials, monkeypatch, tmp_path):
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
 
@@ -201,7 +201,7 @@ def test_curfew_uses_saved_timezone_for_web_access(parent_credentials, monkeypat
     instant = datetime(2026, 11, 20, 16, 45, tzinfo=timezone.utc)
 
     def clock(timezone_name):
-        return instant.astimezone(ZoneInfo(timezone_name or "Asia/Tokyo"))
+        return instant.astimezone(ZoneInfo(timezone_name))
 
     monkeypatch.setattr(curfew, "curfew_clock", clock)
     try:
@@ -221,13 +221,17 @@ def test_curfew_uses_saved_timezone_for_web_access(parent_credentials, monkeypat
             })
             assert rule.status_code == 201
             website = {"target": "https://lesson.example", "rule_type": "WEBSITE"}
-            legacy = agent.post("/check-permission/", json=website).json()
-            assert legacy["is_curfew"] is True
-            assert "01:45" in legacy["reason"]
-
-            result = parent.post("/curfew/", json={
-                "bedtime": "00:55", "wakeup_time": "06:00", "timezone": "Asia/Ho_Chi_Minh",
-            })
+            assert agent.post("/check-permission/", json=website).json()["allowed"] is True
+            assert parent.get("/curfew/").json()["timezone"] == "Asia/Ho_Chi_Minh"
+            assert (
+                parent.post("/curfew/", json={
+                    "bedtime": "00:55", "wakeup_time": "06:00", "timezone": "Asia/Tokyo",
+                }).json()["current_time"] == "01:45"
+            )
+            assert agent.post("/check-permission/", json=website).json()["is_curfew"] is True
+            schedule = {"bedtime": "00:55", "wakeup_time": "06:00"}
+            assert parent.post("/curfew/", json=schedule).json()["timezone"] == "Asia/Tokyo"
+            result = parent.post("/curfew/", json={**schedule, "timezone": "Asia/Ho_Chi_Minh"})
             assert result.status_code == 200, result.text
             assert result.json() == {
                 "bedtime": "00:55",
@@ -238,6 +242,7 @@ def test_curfew_uses_saved_timezone_for_web_access(parent_credentials, monkeypat
             }
             assert agent.post("/check-permission/", json=website).json()["allowed"] is True
             assert agent.get("/usage-stats/").json()["is_bedtime"] is False
+            assert agent.get("/usage-stats/").json()["timezone"] == "Asia/Ho_Chi_Minh"
             assert agent.get("/devices/mmt-test-curfew/config").json()["bedtime"] == "00:55"
             assert parent.get("/onboarding/config").json()["bedtime"] == "00:55"
 
@@ -256,6 +261,18 @@ def test_curfew_uses_saved_timezone_for_web_access(parent_credentials, monkeypat
             assert parent.get("/curfew/").json()["timezone"] == "Asia/Ho_Chi_Minh"
     finally:
         engine.dispose()
+
+
+def test_content_check_distinguishes_domain_policy_and_supplied_text(parent_credentials):
+    with TestClient(main.app, headers=basic(parent_credentials)) as parent:
+        def check(**data):
+            return parent.post("/ai/content-check", json=data)
+
+        assert check().status_code == 422
+        assert check(image_base64="dGVzdA==").status_code == 422
+        assert check(url="https://school.example/lesson-about-porn").json()["is_safe"] is True
+        assert check(url="https://test-p0rn.example/").json()["suggested_action"] == "BLOCK_AND_CLOSE"
+        assert check(text_content="Hướng dẫn cá cược trực tuyến").json()["suggested_action"] == "WARN"
 
 
 def test_youtube_approval_counts_as_entertainment(parent_credentials, monkeypatch, tmp_path):

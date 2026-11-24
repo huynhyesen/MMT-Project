@@ -10,16 +10,18 @@ import urllib.request
 
 # Nạp các module thành phần cốt lõi của Agent
 from monitor import (
-    IGNORE_SYSTEM_PROCS, elapsed_foreground_seconds, get_active_app_metadata, get_foreground_app, tracked_app,
+    elapsed_foreground_seconds, get_active_app_metadata, get_foreground_app, tracked_app,
 )
 from web_policy import (
     ADULT_BLOCK_DOMAINS, DEFAULT_BLOCKED_HOSTS, blocked_hosts_for_agent, is_adult_host, normalize_host,
 )
-from blocker import enforce_block_policy, kill_blocked_process, block_websites, unblock_websites, unblock_all_websites, lock_system, extract_domain
+from blocker import (
+    enforce_block_policy, kill_blocked_process, block_websites, unblock_websites, unblock_all_websites,
+    lock_system, extract_domain, matches_app_rule,
+)
 from hwid import get_device_hwid, get_machine_info
 from cloud_sync import load_agent_config, device_headers, pair_with_backend, fetch_parent_config
 from lan_discovery import discover_parent_server
-from ai_filter.content_guard import AIContentGuard
 from anti_tamper.supervisor import AntiTamperSupervisor, report_tamper_attempt
 from kiosk_lock import show_kiosk_lock, hide_kiosk_lock, is_kiosk_active
 from tray_companion import start_tray_companion, stop_tray_companion
@@ -131,19 +133,6 @@ BLOCKED_DOMAINS = DEFAULT_BLOCKED_HOSTS | ADULT_BLOCK_DOMAINS
 # Danh sách ứng dụng/web được phụ huynh cho phép
 ALLOWED_TARGETS = set()
 
-active_ws = None
-
-def forward_ws_alert(alert_data: dict):
-    """Callback chuyển tiếp cảnh báo AI qua WebSocket thời gian thực."""
-    global active_ws
-    if active_ws:
-        try:
-            asyncio.create_task(active_ws.send(json.dumps(alert_data)))
-        except Exception:
-            pass
-
-ai_guard = AIContentGuard(backend_url=BACKEND_HTTP, ws_callback=forward_ws_alert)
-
 def sync_allowed_rules():
     """Apply the latest complete rule set and keep the current policy if the server is offline."""
     global ALLOWED_TARGETS, BLOCKED_DOMAINS, BLOCKED_KEYWORDS
@@ -165,22 +154,17 @@ def sync_allowed_rules():
             host = normalize_host(rule["target_value"])
             if rule["action"] == "ALLOW" and host and not is_adult_host(host):
                 allowed_domains.add(host)
-                allowed_targets.add(host)
         elif target := extract_domain(rule["target_value"]):
             if rule["action"] == "ALLOW":
                 allowed_targets.add(target)
             elif rule["action"] == "BLOCK":
                 blocked_apps.add(target)
 
-    default_keywords = {
-        keyword for keyword in DEFAULT_BLOCKED_KEYWORDS
-        if not any(keyword in target for target in allowed_targets)
-    }
     unblock_websites((BLOCKED_DOMAINS | allowed_domains) - blocked_domains)
     block_websites(blocked_domains)
     ALLOWED_TARGETS = allowed_targets
     BLOCKED_DOMAINS = blocked_domains
-    BLOCKED_KEYWORDS = default_keywords | blocked_apps
+    BLOCKED_KEYWORDS = DEFAULT_BLOCKED_KEYWORDS | blocked_apps
     print(f"🔄 [AGENT] Đã đồng bộ {len(ALLOWED_TARGETS)} mục được phép.")
     return True
 
@@ -203,7 +187,7 @@ def send_telemetry(app_name: str, duration_sec: int = 10):
         pass
 
 async def monitor_apps_task():
-    """Tác vụ chạy ngầm: Định kỳ quét, tắt ứng dụng bị cấm, lọc nội dung AI và gửi telemetry."""
+    """Áp dụng quy tắc ứng dụng và ghi thời gian sử dụng ở tiền cảnh."""
     poll_interval = 5
     previous_app = None
     previous_sample = time.monotonic()
@@ -215,35 +199,20 @@ async def monitor_apps_task():
         
         for app in metadata_list:
             app_name = app.get("app_name", "")
-            app_lower = app_name.lower()
-            window_title = app.get("window_title", "")
-
-            # 1. AI CONTENT FILTERING: Kiểm tra tiêu đề cửa sổ theo thời gian thực
-            if window_title and not any(ignored in app_lower for ignored in IGNORE_SYSTEM_PROCS):
-                filter_res = ai_guard.inspect_text(window_title, source_name=app_name)
-                if filter_res and not filter_res.get("is_safe", True):
-                    print(f"🛑 [AI CONTENT FILTER] Đã chặn cửa sổ vi phạm: '{window_title}' ({filter_res.get('label')})")
-                    enforce_block_policy(app_name, filter_res.get("reason", "Nội dung độc hại"), "AI Content Filter")
-                    kill_blocked_process(app_name)
-                    blocked.add(app_lower)
-                    continue
-
-            # Nếu ứng dụng hoặc tiêu đề cửa sổ nằm trong danh sách đã được phép -> Bỏ qua không chặn
-            is_allowed = any(allowed in app_lower or (window_title and allowed in window_title.lower()) for allowed in ALLOWED_TARGETS)
-            if is_allowed:
+            if not app_name or any(matches_app_rule(app_name, rule) for rule in ALLOWED_TARGETS):
                 continue
-            
-            # Kiểm tra ứng dụng bị cấm / cần xin phép
-            if any(keyword in app_lower or (window_title and keyword in window_title.lower()) for keyword in BLOCKED_KEYWORDS):
-                enforce_block_policy(app_name, "Cần xin phép phụ huynh trước khi sử dụng ứng dụng này", "Phụ huynh")
-                kill_blocked_process(app_name)
-                blocked.add(app_lower)
+
+            if any(matches_app_rule(app_name, rule) for rule in BLOCKED_KEYWORDS):
+                if not kill_blocked_process(app_name):
+                    continue
+                enforce_block_policy(app_name, "Ứng dụng nằm trong quy tắc chặn.", "Phụ huynh")
+                blocked.add(app_name.lower())
 
                 # Ghi nhận cảnh báo về máy chủ Backend
                 try:
                     alert_payload = json.dumps({
                         "target_value": app_name,
-                        "reason": f"Cố mở ứng dụng/web '{app_name}' chưa được cha mẹ cho phép",
+                        "reason": "Ứng dụng nằm trong danh sách chặn.",
                         "category": "BLOCKED_APP",
                         "is_web": False
                     }).encode("utf-8")
@@ -257,17 +226,6 @@ async def monitor_apps_task():
                 except Exception:
                     pass
 
-                if active_ws:
-                    try:
-                        await active_ws.send(json.dumps({
-                            "type": "UNAPPROVED_ATTEMPT",
-                            "app_name": app_name,
-                            "message": f"Con vừa cố mở '{app_name}' nhưng chưa được phép."
-                        }))
-                    except Exception:
-                        pass
-                continue
-
         foreground_app = tracked_app(foreground_app)
         if foreground_app and foreground_app.lower() in blocked:
             foreground_app = None
@@ -280,12 +238,11 @@ async def monitor_apps_task():
 
 async def listen_to_server():
     """Tác vụ kết nối WebSocket / Cloud Relay (Hỗ trợ cả LAN và WAN)."""
-    global active_ws, ALLOWED_TARGETS, time_limit_locked
+    global time_limit_locked
     while True:
         try:
             active_uri = get_ws_url(BACKEND_HTTP)
             async with connect(active_uri, additional_headers=device_headers(DEVICE_CONFIG)) as websocket:
-                active_ws = websocket
                 print(f"✅ [CLOUD RELAY] Đã kết nối kênh từ xa ({active_uri}) cho thiết bị: {DEVICE_HWID}")
                 await websocket.send(json.dumps({
                     "type": "AGENT_ONLINE",
@@ -331,7 +288,8 @@ async def listen_to_server():
                                     limit_m = req_info.get("time_limit_minutes", 30)
                                     print(f"⏳ [AGENT] Phụ huynh đã duyệt cộng thêm {limit_m} phút sử dụng máy tính cho con!")
                                     time_limit_locked = False
-                                    hide_kiosk_lock()
+                                    if not bedtime_locked:
+                                        hide_kiosk_lock()
                                     sync_allowed_rules()
                                 else:
                                     sync_allowed_rules()
@@ -340,13 +298,13 @@ async def listen_to_server():
                             print(f"🔄 [AGENT] Nhận tín hiệu cập nhật / làm mới từ máy chủ ({msg_type})!")
                             if msg_type in ["RULES_RESET", "FULL_RESET", "LIMIT_UPDATED", "DAILY_RESET_TRIGGERED", "DAILY_RESET", "USAGE_RESET"]:
                                 time_limit_locked = False
-                                hide_kiosk_lock()
+                                if not bedtime_locked:
+                                    hide_kiosk_lock()
                             sync_allowed_rules()
 
                     except Exception:
                         pass
         except Exception as e:
-            active_ws = None
             print(f"⚠️ Mất kết nối tới Server. Thử lại sau 5 giây... ({e})")
             await asyncio.sleep(5)
 
@@ -406,7 +364,6 @@ async def main():
         DEVICE_CONFIG = load_agent_config()
         if DEVICE_CONFIG.get("backend_url"):
             BACKEND_HTTP = DEVICE_CONFIG["backend_url"].rstrip("/")
-            ai_guard.backend_url = BACKEND_HTTP
         print(f"🚀 [AGENT] Trợ lý an toàn máy tính đã khởi động (HWID: {DEVICE_HWID})")
         
         if not DEVICE_CONFIG.get("device_credential"):

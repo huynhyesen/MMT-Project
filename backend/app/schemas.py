@@ -80,6 +80,7 @@ class UsageStatsResponse(BaseModel): #default
     utilities_formatted: str
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
+    timezone: str
     wakeup_hour: str = "06:00"
     child_name: Optional[str] = "Chưa có hồ sơ"
     daily_limit_minutes: Optional[int] = 120
@@ -189,7 +190,7 @@ class CurfewUpdateRequest(BaseModel):
 class CurfewResponse(BaseModel):
     bedtime: str
     wakeup_time: str
-    timezone: str | None
+    timezone: str
     current_time: str
     is_within_curfew: bool
 
@@ -250,9 +251,9 @@ class DevicePairResponse(DeviceConfigResponse):
 
 # Schemas cho AI Content Filter
 class ContentFilterAnalysisRequest(BaseModel):
-    text_content: Optional[str] = None
-    window_title: Optional[str] = None
-    url: Optional[str] = None
+    text_content: Optional[str] = Field(default=None, max_length=8000)
+    window_title: Optional[str] = Field(default=None, max_length=512)
+    url: Optional[str] = Field(default=None, max_length=2048)
     image_base64: Optional[str] = None
 
 class ContentFilterResult(BaseModel):

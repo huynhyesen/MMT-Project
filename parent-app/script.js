@@ -6,6 +6,8 @@ function consoleFetch(url, options = {}) {
 }
 
 const API_BASE = location.origin;
+const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
+let householdTimezone = DEFAULT_TIMEZONE;
 const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         let ws = null;
@@ -122,10 +124,10 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             'children': { title: '👨‍👩‍👧‍👦 Hồ Sơ Con Cái', desc: 'Tạo tài khoản riêng cho từng bé, cài mã PIN và chuyển đổi tài khoản sử dụng' },
             'control': { title: '⚡ Điều Khiển Khẩn Cấp', desc: 'Khóa / Mở máy tính từ xa và gửi lời nhắn trực tiếp tức thì' },
             'requests': { title: '📩 Yêu Cầu Xin Phép', desc: 'Phê duyệt hoặc từ chối khi con xin phép mở Web / Ứng dụng mới hoặc xin thêm giờ' },
-            'stats': { title: '📊 Thống Kê & Giới Hạn', desc: 'Thống kê các app/web thực sự sử dụng với nhãn AI và tự điền giới hạn' },
+            'stats': { title: '📊 Thống Kê & Giới Hạn', desc: 'Thống kê web và ứng dụng theo nhóm sử dụng' },
             'rules': { title: '🛡️ Quản Lý Quy Tắc Web / App', desc: 'Danh sách các trang web / phần mềm đang được Cho phép hoặc Chặn' },
             'curfew': { title: '🌙 Khung Giờ Giới Nghiêm', desc: 'Tự động vô hiệu hóa máy ban đêm và mở lại vào sáng hôm sau' },
-            'alerts': { title: '🚨 Nhật Ký Cảnh Báo & Lọc AI', desc: 'Phát hiện nội dung không phù hợp qua AI và cảnh báo can thiệp Anti-Tamper' },
+            'alerts': { title: '🚨 Cảnh báo & Lọc nội dung', desc: 'Xem các lần truy cập tên miền 18+ và các cảnh báo từ Agent' },
             'reset': { title: '🔄 Cài Đặt & Đặt Lại Hệ Thống', desc: 'Đặt lại thời gian về 0, làm sạch hộp thư hoặc khôi phục cài đặt gốc' }
         };
 
@@ -204,8 +206,8 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                             fetchAlerts();
                         } else if (data.type === "AI_CONTENT_VIOLATION") {
                             playNotificationSound('alert');
-                            showDesktopNotification("🤖 AI Content Filter!", `Đã chặn nội dung: "${data.source}" (${data.reason})`);
-                            showToast(`🚨 [AI Filter] Đã chặn nội dung không phù hợp: "${data.source}" (${data.reason})`, "danger");
+                            showDesktopNotification("Cảnh báo nội dung", `Nguồn cảnh báo: "${data.source}" (${data.reason})`);
+                            showToast(`🚨 Cảnh báo nội dung: "${data.source}" (${data.reason})`, "danger");
                             fetchAlerts();
                         } else if (data.type === "DEVICE_CREATED" || data.type === "DEVICE_PAIRED" || data.type === "DEVICE_CONNECTED_WAN" || data.type === "DEVICE_DISCONNECTED_WAN") {
                             if (data.type === "DEVICE_PAIRED") {
@@ -643,10 +645,14 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                     const data = await res.json();
                     document.getElementById("curfew-bedtime-input").value = data.bedtime;
                     document.getElementById("curfew-wakeup-input").value = data.wakeup_time;
-                    document.getElementById("curfew-timezone-input").value =
-                        data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+                    const timezone = data.timezone || DEFAULT_TIMEZONE;
+                    const changed = householdTimezone !== timezone;
+                    householdTimezone = timezone;
+                    document.getElementById("curfew-timezone-input").value = timezone;
+                    const timezoneLabel = timezone === DEFAULT_TIMEZONE ? "Giờ Việt Nam, UTC+7" : timezone;
                     document.getElementById("curfew-server-time").textContent =
-                        `Giờ app kiểm tra lúc tải: ${data.current_time} (${data.timezone || "giờ máy chủ"})`;
+                        `Giờ áp dụng lúc tải: ${data.current_time} (${timezoneLabel})`;
+                    if (changed && currentActiveTab === "alerts") fetchAlerts();
                     
                     const badge = document.getElementById("curfew-status-badge");
                     const overviewCurfewText = document.getElementById("overview-curfew-text");
@@ -687,9 +693,9 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
         async function saveCurfewSettings() {
             const bedtime = document.getElementById("curfew-bedtime-input").value;
             const wakeup = document.getElementById("curfew-wakeup-input").value;
-            const timezone = document.getElementById("curfew-timezone-input").value.trim();
-            if (!bedtime || !wakeup || !timezone) {
-                showToast("Nhập giờ bắt đầu, giờ kết thúc và múi giờ.", "danger");
+            const timezone = document.getElementById("curfew-timezone-input").value.trim() || DEFAULT_TIMEZONE;
+            if (!bedtime || !wakeup) {
+                showToast("Nhập giờ bắt đầu và giờ kết thúc.", "danger");
                 return;
             }
             try {
@@ -915,15 +921,15 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
                 container.innerHTML = alerts.map(a => {
                     const timeStr = new Date(a.timestamp.endsWith("Z") || /[+-][0-9]{2}:[0-9]{2}$/.test(a.timestamp)
-                        ? a.timestamp : a.timestamp + "Z").toLocaleString("vi-VN");
+                        ? a.timestamp : a.timestamp + "Z").toLocaleString("vi-VN", { timeZone: householdTimezone });
                     
                     let catBadge = `<span class="text-[9px] bg-blue-100 text-blue-800 border border-blue-200 font-bold px-1.5 py-0.5 rounded">⚠️ Web Lạ Chưa Phép</span>`;
                     if (a.category === "ADULT_WEBSITE") {
                         catBadge = '<span class="text-[10px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded">18+</span>';
                     } else if (a.category === "AI_CONTENT_TEXT") {
-                        catBadge = `<span class="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">🤖 Lọc AI Văn Bản</span>`;
+                        catBadge = `<span class="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">Cảnh báo văn bản</span>`;
                     } else if (a.category === "AI_CONTENT_IMAGE") {
-                        catBadge = `<span class="text-[9px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">🖼️ Lọc AI Màn Hình</span>`;
+                        catBadge = `<span class="text-[9px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">Cảnh báo hình ảnh</span>`;
                     } else if (a.category === "ANTI_TAMPER_ATTEMPT") {
                         catBadge = `<span class="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">🔒 Chống Tắt Ngầm</span>`;
                     } else if (a.category === "BLOCKED_APP") {

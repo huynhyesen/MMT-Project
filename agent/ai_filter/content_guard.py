@@ -3,8 +3,6 @@ import json
 import urllib.request
 from typing import Optional, Dict, Any
 
-from cloud_sync import device_headers
-
 from .text_analyzer import AITextAnalyzer
 from .image_analyzer import AIImageAnalyzer
 
@@ -63,6 +61,8 @@ class AIContentGuard:
 
         # 1. Gửi qua REST API tới Backend
         try:
+            from cloud_sync import device_headers
+
             payload = json.dumps({
                 "target_value": source,
                 "reason": f"[AI Filter] {reason}",
