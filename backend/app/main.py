@@ -1362,7 +1362,7 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         host for host, in todays_usage(db, device, db.query(models.MinimalTelemetryLog.domain), curfew.timezone)
         .filter(models.MinimalTelemetryLog.domain.is_not(None)).distinct()
     }
-    category_seconds = {"LEARNING": 0, "ENTERTAINMENT": 0, "SOCIAL": 0, "UTILITY": 0, "OTHER": 0}
+    category_seconds = {"LEARNING": 0, "ENTERTAINMENT": 0, "SOCIAL": 0, "UTILITY": 0, "OTHER": 0, "ADULT": 0}
 
     for name, seconds in sorted(real_usage_sec_map.items(), key=lambda item: item[1], reverse=True):
         minutes = seconds // 60
@@ -1372,7 +1372,9 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         if tag == "OTHER" and name in web_hosts:
             cat = "Chưa phân loại"
         
-        if name in web_hosts:
+        if tag == "ADULT":
+            limit_m = 0
+        elif name in web_hosts:
             rule = web_rule_for_host(name, website_rules)
             limit_m = (rule.time_limit_minutes or 0) if rule else 0
         else:
@@ -1384,6 +1386,8 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
                     break
 
         rem_m, rem_str, is_exp = format_remaining(limit_m, minutes)
+        if tag == "ADULT":
+            rem_m, rem_str = 0, "Chặn theo bộ lọc"
 
         category = tag if tag != "OTHER" or name in web_hosts else "UTILITY"
         category_seconds[category] += seconds
@@ -1431,11 +1435,13 @@ def get_usage_stats(request: Request, child_id: Optional[int] = None, db: Sessio
         utilities_minutes=category_seconds["UTILITY"] // 60,
         utilities_seconds=category_seconds["UTILITY"],
         unclassified_seconds=category_seconds["OTHER"],
+        adult_seconds=category_seconds["ADULT"],
         utilities_formatted=format_usage_duration(category_seconds["UTILITY"]),
         is_bedtime=curfew.is_within_curfew,
         bedtime_hour=curfew.bedtime,
         wakeup_hour=curfew.wakeup_time,
         timezone=curfew.timezone,
+        server_time=curfew.server_time,
         child_name=child_name,
         daily_limit_minutes=child_daily_limit,
         remaining_minutes=child_remaining,
@@ -1459,7 +1465,7 @@ async def update_curfew(req: schemas.CurfewUpdateRequest, db: Session = Depends(
     db.commit()
 
     curfew = current_curfew(db)
-    await manager.broadcast_json({"type": "CURFEW_UPDATED", **curfew.model_dump()})
+    await manager.broadcast_json({"type": "CURFEW_UPDATED", **curfew.model_dump(mode="json")})
     return curfew
 
 

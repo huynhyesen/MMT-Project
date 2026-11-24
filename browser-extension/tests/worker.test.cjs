@@ -110,6 +110,9 @@ test("the browser redirects adult and restricted sites, passing only the domain"
     );
     assert(match);
     assert.equal(new RegExp(match.condition.regexFilter).exec("https://test-p0rn.example/path?private=1")[1], "test-p0rn.example");
+    const listed = browser.rules().find(rule => rule.condition.requestDomains?.includes("hihisex.men"));
+    assert(listed.action.redirect.regexSubstitution.includes("kind=adult"));
+    assert.equal(new RegExp(listed.condition.regexFilter).exec("https://www.hihisex.men/path")[1], "www.hihisex.men");
     assert(browser.rules().some(rule => rule.condition.requestDomains?.includes("extra.example")));
     const ask = browser.rules().find(rule => rule.action.redirect.regexSubstitution.includes("kind=ask"));
     assert(new RegExp(ask.condition.regexFilter).test("https://www.lesson.example/"));

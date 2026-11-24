@@ -152,6 +152,7 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                 mobileNav.classList.add('hidden');
             }
             refreshVisibleUsageStats();
+            if (tabName === "curfew") fetchCurfew();
         }
 
         function toggleMobileMenu() {
@@ -418,22 +419,18 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         let parentChart = null;
 
-        function updateParentChart(learning, entertainment, social, unclassified) {
+        function updateParentChart(categories) {
             const ctx = document.getElementById("parentUsageChart");
             if (!ctx) return;
-            const total = (learning || 0) + (entertainment || 0) + (social || 0) + (unclassified || 0);
-            const legendText = document.getElementById("chart-legend-text");
-            if (legendText) {
-                if (total === 0) {
-                    legendText.innerText = "Chưa có hoạt động hôm nay";
-                } else {
-                    legendText.innerHTML = `📚 <b>${formatUsageSeconds(learning)}</b> • 🎮 <b>${formatUsageSeconds(entertainment)}</b> • 💬 <b>${formatUsageSeconds(social)}</b> • Chưa phân loại <b>${formatUsageSeconds(unclassified)}</b>`;
-                }
+            const hasUsage = categories.length > 0;
+            const legend = document.getElementById("chart-legend-text");
+            if (legend) {
+                legend.textContent = hasUsage ? formatUsageBreakdown(categories) : "Chưa có hoạt động hôm nay";
             }
 
-            const dataValues = total === 0 ? [1] : [learning || 0, entertainment || 0, social || 0, unclassified || 0];
-            const bgColors = total === 0 ? ['#e2e8f0'] : ['#10b981', '#f43f5e', '#3b82f6', '#64748b'];
-            const labels = total === 0 ? ['Chưa dùng'] : ['Học tập', 'Giải trí', 'Mạng xã hội', 'Chưa phân loại'];
+            const dataValues = hasUsage ? categories.map(category => category.seconds) : [1];
+            const bgColors = hasUsage ? categories.map(category => category.color) : ["#e2e8f0"];
+            const labels = hasUsage ? categories.map(category => category.label) : ["Chưa dùng"];
 
             if (parentChart) {
                 parentChart.data.datasets[0].data = dataValues;
@@ -496,12 +493,7 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                 const overviewUsed = document.getElementById("overview-used-time");
                 if (overviewUsed) overviewUsed.textContent = data.total_formatted;
 
-                updateParentChart(
-                    data.learning_seconds ?? (data.learning_minutes || 0) * 60,
-                    data.entertainment_seconds ?? (data.entertainment_minutes || 0) * 60,
-                    data.social_seconds ?? (data.social_minutes || 0) * 60,
-                    data.unclassified_seconds ?? 0
-                );
+                updateParentChart(usageCategories(data));
 
                 cachedUsageItems = data.items || [];
                 renderFilteredUsage();
@@ -541,9 +533,10 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             items.forEach(item => {
                 const row = document.createElement("div");
                 
+                const isAdult = item.tag === "ADULT";
                 let remColor = "text-emerald-700 bg-emerald-50 border-emerald-200";
                 let barColor = "bg-emerald-600";
-                if (item.is_expired) {
+                if (isAdult || item.is_expired) {
                     remColor = "text-rose-700 bg-rose-50 border-rose-300 font-bold";
                     barColor = "bg-rose-500";
                 } else if (item.remaining_minutes <= 15 && item.time_limit_minutes > 0) {
@@ -563,16 +556,16 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                             <span class="text-slate-500">Đã dùng: <strong>${item.duration_formatted}</strong></span>
                             <span>•</span>
                             <span class="text-[11px] px-2.5 py-0.5 rounded-full border ${remColor}">
-                                ${item.is_expired ? '🛑 Đã hết giờ (0p)' : '⏳ ' + item.remaining_formatted}
+                                ${item.is_expired ? '🛑 Đã hết giờ (0p)' : item.remaining_formatted}
                             </span>
-                            <button data-argument="${escapeHtml(item.app_name)}" onclick="openLimitModal(this.dataset.argument, ${item.time_limit_minutes})" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 bg-white border border-blue-200 rounded-lg shadow-xs">
+                            ${isAdult ? "" : `<button data-argument="${escapeHtml(item.app_name)}" onclick="openLimitModal(this.dataset.argument, ${item.time_limit_minutes})" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 bg-white border border-blue-200 rounded-lg shadow-xs">
                                 ⚙️ Đặt hạn mức
-                            </button>
+                            </button>`}
                         </div>
                     </div>
                     
                     <div class="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-200/50">
-                        <div class="flex items-center gap-1 text-[11px] text-slate-500">
+                        ${isAdult ? "" : `<div class="flex items-center gap-1 text-[11px] text-slate-500">
                             <span>⚡ Tự điền nhanh:</span>
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 30)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">30p</button>
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 45)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">45p</button>
@@ -580,7 +573,7 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 90)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">90p</button>
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 120)" class="px-2 py-0.5 bg-white hover:bg-blue-50 hover:text-blue-600 border border-slate-200 rounded text-[10px] font-semibold">120p</button>
                             <button data-argument="${escapeHtml(item.app_name)}" onclick="setQuickLimit(this.dataset.argument, 0)" class="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-semibold text-slate-500">Không GH</button>
-                        </div>
+                        </div>`}
                         <div class="flex items-center gap-2 flex-1 max-w-xs">
                             <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden flex-1">
                                 <div class="${barColor} h-full rounded-full transition-all" style="width: ${item.percentage}%"></div>
@@ -638,51 +631,61 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
             await setQuickLimit(target, mins);
         }
 
-        async function fetchCurfew() {
-            try {
-                const res = await consoleFetch(`${API_BASE}/curfew/`);
-                if (res.ok) {
-                    const data = await res.json();
-                    document.getElementById("curfew-bedtime-input").value = data.bedtime;
-                    document.getElementById("curfew-wakeup-input").value = data.wakeup_time;
-                    const timezone = data.timezone || DEFAULT_TIMEZONE;
-                    const changed = householdTimezone !== timezone;
-                    householdTimezone = timezone;
-                    document.getElementById("curfew-timezone-input").value = timezone;
-                    const timezoneLabel = timezone === DEFAULT_TIMEZONE ? "Giờ Việt Nam, UTC+7" : timezone;
-                    document.getElementById("curfew-server-time").textContent =
-                        `Giờ áp dụng lúc tải: ${data.current_time} (${timezoneLabel})`;
-                    if (changed && currentActiveTab === "alerts") fetchAlerts();
-                    
-                    const badge = document.getElementById("curfew-status-badge");
-                    const overviewCurfewText = document.getElementById("overview-curfew-text");
-                    const overviewCurfewStatus = document.getElementById("overview-curfew-status");
-                    
-                    if (overviewCurfewText) {
-                        overviewCurfewText.textContent = `${data.bedtime} → ${data.wakeup_time}`;
-                    }
+        let curfewRequestId = 0;
+        let savedCurfew;
 
-                    if (data.is_within_curfew) {
-                        if (badge) {
-                            badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse";
-                            badge.textContent = "🌙 Đang trong giờ giới nghiêm";
-                        }
-                        if (overviewCurfewStatus) {
-                            overviewCurfewStatus.className = "text-[10px] text-rose-600 font-bold animate-pulse";
-                            overviewCurfewStatus.textContent = "🌙 Đang giới nghiêm";
-                        }
-                    } else {
-                        if (badge) {
-                            badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300";
-                            badge.textContent = "🟢 Ngoài giờ giới nghiêm";
-                        }
-                        if (overviewCurfewStatus) {
-                            overviewCurfewStatus.className = "text-[10px] text-emerald-600 font-semibold";
-                            overviewCurfewStatus.textContent = "🟢 Bình thường";
-                        }
-                    }
-                }
-            } catch (e) {}
+        function renderCurfew(data, replaceForm = false) {
+            const bedtimeInput = document.getElementById("curfew-bedtime-input");
+            const wakeupInput = document.getElementById("curfew-wakeup-input");
+            const timezoneInput = document.getElementById("curfew-timezone-input");
+            const timezone = data.timezone || DEFAULT_TIMEZONE;
+            const editing = savedCurfew && (
+                bedtimeInput.value !== savedCurfew.bedtime || wakeupInput.value !== savedCurfew.wakeup_time
+                || timezoneInput.value.trim() !== savedCurfew.timezone
+            );
+            if (replaceForm || !editing) {
+                bedtimeInput.value = data.bedtime;
+                wakeupInput.value = data.wakeup_time;
+                timezoneInput.value = timezone;
+            }
+            savedCurfew = { ...data, timezone };
+
+            const changed = householdTimezone !== timezone;
+            householdTimezone = timezone;
+            const timezoneLabel = timezone === DEFAULT_TIMEZONE ? "Giờ Việt Nam, UTC+7" : timezone;
+            document.getElementById("curfew-server-time").textContent =
+                `Giờ máy chủ lúc kiểm tra ${data.current_time} (${timezoneLabel})`;
+            if (changed && currentActiveTab === "alerts") fetchAlerts();
+
+            const active = data.is_within_curfew;
+            const disabled = data.bedtime === data.wakeup_time;
+            const badge = document.getElementById("curfew-status-badge");
+            const overviewCurfewText = document.getElementById("overview-curfew-text");
+            const overviewCurfewStatus = document.getElementById("overview-curfew-status");
+
+            overviewCurfewText.textContent = disabled ? "Đang tắt" : `${data.bedtime} → ${data.wakeup_time}`;
+            badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border " + (
+                active ? "bg-rose-100 text-rose-800 border-rose-300 animate-pulse"
+                    : "bg-emerald-100 text-emerald-800 border-emerald-300"
+            );
+            badge.textContent = disabled ? "Giờ giới nghiêm đang tắt"
+                : active ? "🌙 Đang trong giờ giới nghiêm" : "🟢 Ngoài giờ giới nghiêm";
+            overviewCurfewStatus.className = active ? "text-[10px] text-rose-600 font-bold animate-pulse"
+                : "text-[10px] text-emerald-600 font-semibold";
+            overviewCurfewStatus.textContent = disabled ? ""
+                : active ? "🌙 Đang giới nghiêm" : "🟢 Bình thường";
+        }
+
+        async function fetchCurfew() {
+            const requestId = ++curfewRequestId;
+            try {
+                const res = await consoleFetch(`${API_BASE}/curfew/`, { cache: "no-store" });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (requestId === curfewRequestId) renderCurfew(data);
+            } catch (error) {
+                console.error("Lỗi tải giờ giới nghiêm", error);
+            }
         }
 
         function setCurfewPreset(bedtime, wakeup) {
@@ -711,8 +714,10 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                         : "Kiểm tra giờ và múi giờ, ví dụ Asia/Ho_Chi_Minh.";
                     throw new Error(message);
                 }
-                showToast(`Đã lưu giờ giới nghiêm ${bedtime}–${wakeup} (${timezone}).`, "success");
-                await fetchCurfew();
+                const saved = await res.json();
+                curfewRequestId++;
+                renderCurfew(saved, true);
+                showToast(`Đã lưu giờ giới nghiêm ${saved.bedtime}–${saved.wakeup_time} (${saved.timezone}).`, "success");
             } catch (error) {
                 showToast("Không lưu được giờ giới nghiêm. " + error.message, "danger");
             }
@@ -1178,5 +1183,8 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
             switchParentTab('overview');
             document.addEventListener("visibilitychange", refreshVisibleUsageStats);
-            setInterval(refreshVisibleUsageStats, 10000);
+            setInterval(() => {
+                refreshVisibleUsageStats();
+                if (!document.hidden && ["overview", "curfew"].includes(currentActiveTab)) fetchCurfew();
+            }, 10000);
         });

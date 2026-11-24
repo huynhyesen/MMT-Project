@@ -77,10 +77,12 @@ class UsageStatsResponse(BaseModel): #default
     utilities_minutes: int
     utilities_seconds: int = 0
     unclassified_seconds: int = 0
+    adult_seconds: int = 0
     utilities_formatted: str
     is_bedtime: bool = False
     bedtime_hour: str = "22:00"
     timezone: str
+    server_time: datetime
     wakeup_hour: str = "06:00"
     child_name: Optional[str] = "Chưa có hồ sơ"
     daily_limit_minutes: Optional[int] = 120
@@ -192,6 +194,7 @@ class CurfewResponse(BaseModel):
     wakeup_time: str
     timezone: str
     current_time: str
+    server_time: datetime
     is_within_curfew: bool
 
 # ==========================================

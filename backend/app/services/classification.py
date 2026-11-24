@@ -1,4 +1,4 @@
-from agent.web_policy import normalize_host
+from agent.web_policy import is_adult_host, normalize_host
 
 
 WEB_CATEGORIES = {
@@ -7,7 +7,7 @@ WEB_CATEGORIES = {
         "edx.org", "udemy.com", "quizlet.com", "hocmai.vn", "vio.edu.vn", "vnedu.vn", "olm.vn",
         "vietjack.com", "geogebra.org", "code.org", "w3schools.com", "leetcode.com", "hackerrank.com",
         "stackoverflow.com", "github.com", "gitlab.com", "python.org", "violet.vn", "zoom.us",
-        "classroom.google.com", "meet.google.com", "teams.microsoft.com", "schoology.com",
+        "classroom.google.com", "meet.google.com", "teams.microsoft.com", "schoology.com", "oj.vnoi.info",
     },
     "ENTERTAINMENT": {
         "youtube.com", "youtu.be", "netflix.com", "spotify.com", "roblox.com", "minecraft.net",
@@ -88,6 +88,15 @@ def classify_item(name: str, *, is_web: bool | None = None) -> dict:
         is_web = bool(host) and not host.endswith((".exe", ".app", ".bin"))
     web_tag = None
     if is_web:
+        if host and is_adult_host(host):
+            return {
+                "category": "Nội dung 18+",
+                "tag": "ADULT",
+                "icon": "🔞",
+                "badge_color": "bg-rose-100 text-rose-800 border-rose-300",
+                "default_limit": 0,
+                "is_educational": False,
+            }
         default_result["category"] = "Chưa phân loại"
         labels = host.split(".")
         for index in range(len(labels)):

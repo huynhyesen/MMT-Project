@@ -119,8 +119,7 @@
             <div>
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold">Dành cho Trẻ Em</span>
-                    <span id="bedtime-badge-text" class="text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold">Khóa: 22:00 → Mở: 06:00</span>
-                    <span class="text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 font-bold border border-indigo-200 flex items-center gap-1">🔒 Chống tắt ngầm: Bật</span>
+                    <span id="bedtime-badge-text" class="text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold">Đang tải giờ giới nghiêm</span>
                 </div>
                 <h2 id="current-tab-title" class="text-xl md:text-2xl font-black text-slate-800 tracking-tight mt-1">Tổng Quan & Đếm Ngược</h2>
                 <p id="current-tab-desc" class="text-xs text-slate-500">Tự giác cân đối giữa Học tập 📚 và Giải trí 🎮</p>
@@ -199,7 +198,7 @@
             <div class="flex items-center gap-3">
                 <span class="text-3xl">🔔</span>
                 <div>
-                    <h4 class="font-bold text-sm text-amber-800">Nhắc nhở sớm: Con còn 15 phút!</h4>
+                    <h4 class="font-bold text-sm text-amber-800">Con sắp hết giờ dùng máy</h4>
                     <p class="text-xs text-amber-700">Hãy chuẩn bị lưu lại bài tập hoặc các trang tài liệu đang học để không bị gián đoạn nhé.</p>
                 </div>
             </div>
@@ -246,7 +245,7 @@
                     <div>
                         <h3 class="text-lg font-bold text-amber-300">ĐÃ ĐẾN GIỜ GIỚI NGHIÊM (Vô hiệu hóa ban đêm)</h3>
                         <p class="text-xs text-slate-300 mt-1">
-                            Khung giờ nghỉ ngơi: từ <b id="bedtime-hour-text" class="text-amber-200">22:00</b> tối đến <b id="wakeup-hour-text" class="text-emerald-300">06:00</b> sáng hôm sau.
+                            Giờ giới nghiêm từ <b id="bedtime-hour-text" class="text-amber-200">22:00</b> đến <b id="wakeup-hour-text" class="text-emerald-300">06:00</b>.
                         </p>
                         <p class="text-[11px] text-slate-400 mt-0.5">Đã đến lúc tắt máy, đánh răng và đi ngủ để nạp đầy năng lượng cho ngày mai con nhé!</p>
                     </div>
@@ -321,6 +320,7 @@
                     <div class="w-full bg-white/20 rounded-full h-3 overflow-hidden">
                         <div id="summary-progress-bar" class="bg-emerald-400 h-3 rounded-full transition-all duration-500" style="width: 0%"></div>
                     </div>
+                    <p id="summary-extra-usage" class="hidden mt-2 text-xs text-blue-100"></p>
                 </div>
             </div>
 
@@ -424,7 +424,7 @@
                         <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
                             <span>📊</span> Bảng Thống Kê & Thời Gian Còn Lại
                         </h3>
-                        <p class="text-xs text-slate-500 mt-0.5">Phân loại tự động theo Học tập, Giải trí và Mạng xã hội</p>
+                        <p class="text-xs text-slate-500 mt-0.5">Thời gian hôm nay theo từng nhóm và từng web hoặc ứng dụng.</p>
                     </div>
                     <button onclick="fetchUsageStats()" class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold py-1.5 px-3 rounded-lg text-xs transition">
                         🔄 Cập nhật số liệu

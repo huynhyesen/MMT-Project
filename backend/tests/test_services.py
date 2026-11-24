@@ -40,6 +40,7 @@ def test_classify_entertainment():
 def test_web_classification_matches_whole_domain_labels():
     assert classify_item("m.youtube.com")["tag"] == "ENTERTAINMENT"
     assert classify_item("classroom.google.com")["tag"] == "LEARNING"
+    assert classify_item("oj.vnoi.info")["tag"] == "LEARNING"
     assert classify_item("youtube-help.example")["tag"] == "OTHER"
     assert classify_item("youtube.com.example")["tag"] == "OTHER"
     assert classify_item("winword.exe")["tag"] == "LEARNING"
@@ -98,8 +99,12 @@ def test_curfew_overnight():
 
 
 def test_adult_policy_matches_hostname_labels_without_reading_page_paths():
-    from agent.web_policy import is_adult_host, normalize_host
+    from agent.web_policy import blocked_hosts_for_agent, is_adult_host, normalize_host
 
     assert is_adult_host(normalize_host("https://test-p0rn.example/"))
     assert is_adult_host(normalize_host("https://www.18plus.example./"))
+    assert classify_item("hihisex.men")["tag"] == "ADULT"
+    assert is_adult_host(normalize_host("https://sub.hihisex.men/"))
+    assert "hihisex.men" in blocked_hosts_for_agent([])
+    assert not is_adult_host(normalize_host("https://hihisex.men.example/"))
     assert not is_adult_host(normalize_host("https://school.example/lesson-about-porn"))
