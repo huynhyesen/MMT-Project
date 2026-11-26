@@ -528,3 +528,31 @@ def test_free_browsing_blocks_adult_domains_and_enforces_website_limits(parent_c
             assert policy["adult"] == ["updated-filter.test"]
     finally:
         engine.dispose()
+
+
+
+def test_suspected_content_warns_without_blocking_until_parent_decides(parent_credentials):
+    with (
+        TestClient(main.app, headers=basic(parent_credentials)) as parent,
+        TestClient(main.app) as agent,
+        TestClient(main.app) as child,
+    ):
+        profile, credential = enroll(parent, agent, "Metadata test", "mmt-metadata-test")
+        device_id, token = credential.split(".")
+        assert child.post("/children/login", headers={
+            "Authorization": f"Bearer {device_id}.{security.dashboard_key(token)}",
+        }, json={"child_id": profile["id"], "pin": "2580"}).status_code == 200
+        web_token = child.get("/web-tracking/session").json()["token"]
+        headers = {"Authorization": f"Bearer {web_token}"}
+        host = "unclassified-metadata.example"
+        route = "/web-tracking/content-warning"
+        assert agent.post(route, json={"host": host}).status_code == 401
+        for target in ("oj.vnoi.info", host, host):
+            assert child.post(route, headers=headers, json={"host": target}).status_code == 200
+        warnings = [a for a in parent.get("/alerts/").json() if a["category"] == "SUSPECTED_ADULT_WEBSITE"]
+        assert [(item["target_value"], item["attempt_count"]) for item in warnings] == [(host, 2)]
+        assert host not in child.get("/web-tracking/policy", headers=headers).json()["blocked"]
+        assert parent.post("/rules/", json={
+            "rule_type": "WEBSITE", "target_value": host, "action": "BLOCK",
+        }).status_code == 201
+        assert host in child.get("/web-tracking/policy", headers=headers).json()["blocked"]

@@ -253,7 +253,34 @@ async function connect(message, sender) {
     return true;
 }
 
+async function reportContentWarning(sender) {
+    const { tracking } = await chrome.storage.session.get("tracking");
+    if (!tracking) return false;
+    const page = await activePage();
+    const host = hostname(sender.url);
+    if (!page?.used || page.id !== sender.tab.id || !host || page.host !== host
+        || new URL(page.url).origin === tracking.origin) return false;
+    const classified = tracking.policy.classified || [];
+    if (host.endsWith(".edu") || host.endsWith(".edu.vn")
+        || classified.some(domain => host === domain || host.endsWith("." + domain))
+        || accessKind(host, tracking.policy)) return true;
+
+    try {
+        const response = await backendRequest(tracking, "/web-tracking/content-warning", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ host })
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
+    if (message.type === "suspected-adult-content" && sender.frameId === 0 && sender.tab?.active && sender.url) {
+        enqueue(() => reportContentWarning(sender)).then(handled => respond({ handled: handled === true }));
+        return true;
+    }
     if (message.type === "pulse" && sender.tab?.active) {
         enqueue(() => track());
         return;

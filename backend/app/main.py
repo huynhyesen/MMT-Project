@@ -17,6 +17,7 @@ from . import database, models, schemas, security
 from fastapi.middleware.cors import CORSMiddleware
 
 from .services.classification import (
+    WEB_CATEGORIES,
     extract_target_name,
     is_system_process,
     classify_item
@@ -262,7 +263,7 @@ async def authorize_request(request: Request, call_next):
         return await call_next(request)
     if (method, path) in {
         ("GET", "/web-tracking/policy"), ("POST", "/web-tracking/usage"),
-        ("POST", "/web-tracking/alert"),
+        ("POST", "/web-tracking/alert"), ("POST", "/web-tracking/content-warning"),
     }:
         request.state.device = security.resolve_device(request, web_tracking=True)
         if request.state.device:
@@ -636,6 +637,7 @@ def browser_web_policy(db, device):
     policy = {
         "targets": [], "blocked": [], "ask": [], "expired": [],
         "remaining": {}, "expired_usage": {}, "track_unrestricted": True, "adult": sorted(additional_adult_hosts()),
+        "classified": sorted(set().union(*WEB_CATEGORIES.values())),
     }
     for host, rule in rules.items():
         effective = web_rule_for_host(host, rules)
@@ -721,18 +723,36 @@ async def record_adult_website_attempt(data: schemas.WebHost, request: Request, 
     return {"status": "success"}
 
 
+@app.post("/web-tracking/content-warning")
+async def record_content_warning(data: schemas.WebHost, request: Request, db: Session = Depends(database.get_db)):
+    host = normalize_host(data.host)
+    if not host:
+        raise HTTPException(422, "Tên miền không hợp lệ.")
+    device = client_device(request)
+    rule = web_rule_for_host(host, effective_web_rules(db, device))
+    if classify_item(host, is_web=True)["tag"] == "OTHER" and (not rule or rule.action != "BLOCK"):
+        await log_website_alert(host, device, db, suspected=True)
+    return {"status": "success"}
+
+
 async def log_adult_website_attempt(host, device, db):
+    await log_website_alert(host, device, db)
+
+
+async def log_website_alert(host, device, db, *, suspected=False):
+    category = "SUSPECTED_ADULT_WEBSITE" if suspected else "ADULT_WEBSITE"
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     alert = db.query(models.AlertLog).filter_by(
-        device_id=device.id, target_value=host, category="ADULT_WEBSITE"
+        device_id=device.id, target_value=host, category=category
     ).filter(models.AlertLog.timestamp >= now - timedelta(minutes=5)).order_by(
         models.AlertLog.timestamp.desc()
     ).first()
     first_attempt = alert is None
     if first_attempt:
         alert = models.AlertLog(
-            device_id=device.id, target_value=host, category="ADULT_WEBSITE",
-            reason="Tiện ích đã chặn tên miền 18+.", is_web=True, timestamp=now,
+            device_id=device.id, target_value=host, category=category,
+            reason=("Tiêu đề hoặc mô tả có dấu hiệu nội dung 18+." if suspected
+                    else "Tiện ích đã chặn tên miền 18+."), is_web=True, timestamp=now,
         )
         db.add(alert)
     else:
@@ -742,7 +762,7 @@ async def log_adult_website_attempt(host, device, db):
 
     profile = db.get(models.ChildProfile, device.child_profile_id)
     await manager.send_to_device("parent_dashboard", {
-        "type": "ADULT_WEBSITE_BLOCKED", "domain": host,
+        "type": "SUSPECTED_ADULT_WEBSITE" if suspected else "ADULT_WEBSITE_BLOCKED", "domain": host,
         "child_name": profile.name if profile else None,
         "first_attempt": first_attempt,
     })

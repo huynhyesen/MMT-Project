@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MMT – Theo dõi và lọc web",
   "description": "Duyệt web tự do có lọc, cảnh báo 18+ và theo dõi hạn mức web.",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "permissions": [
     "alarms",
     "declarativeNetRequest",

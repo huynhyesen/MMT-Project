@@ -17,6 +17,7 @@ function fakeBrowser(policy) {
     const storage = {};
     const reports = [];
     const alerts = [];
+    const warnings = [];
     const event = name => ({ addListener(callback) { handlers[name] = callback; } });
     let installed = [];
     let now = 1000;
@@ -62,6 +63,10 @@ function fakeBrowser(policy) {
                 alerts.push(payload);
                 return { ok: true };
             }
+            if (url === origin + "/web-tracking/content-warning") {
+                warnings.push(payload);
+                return { ok: true };
+            }
             assert.equal(url, origin + "/web-tracking/usage");
             reports.push(payload);
             if (policy.remaining?.[payload.host] != null) {
@@ -78,7 +83,7 @@ function fakeBrowser(policy) {
     });
     vm.runInContext(source, context);
     return {
-        handlers, writes, reports, alerts,
+        handlers, writes, reports, alerts, warnings,
         rules: () => installed,
         navigate: (url, audible = false) => { page = { id: 4, url, audible }; },
         setActivity: state => { activity = state; },
@@ -173,4 +178,42 @@ test("only the foreground tab is counted across connection renewals, blur and lo
     browser.handlers.alarm({ name: "mmt-web-usage" });
     await browser.settle();
     assert.equal(browser.reports.length, 1);
+});
+
+
+test("metadata warnings send only the domain and skip classified websites", async () => {
+    const browser = fakeBrowser({ targets: [], classified: ["known.example"], track_unrestricted: true });
+    await browser.connect();
+    for (const host of ["new.example", "sub.known.example"]) {
+        const url = "https://" + host + "/article";
+        browser.navigate(url);
+        const result = await browser.message({ type: "suspected-adult-content" }, {
+            url, frameId: 0, tab: { id: 4, active: true },
+        });
+        assert.equal(result.handled, true);
+    }
+    assert.deepEqual(browser.warnings, [{ host: "new.example" }]);
+    assert.deepEqual(browser.writes, []);
+});
+
+test("the content script reads metadata locally and reports a signal without text", async () => {
+    const pulse = readFileSync(path.join(folder, "pulse.js"), "utf8");
+    let tick;
+    const sent = [];
+    const document = { hidden: false, title: "Bài học giáo dục giới tính", head: { querySelector: () => null } };
+    vm.runInNewContext(pulse, {
+        document, location: { hostname: "new.example" },
+        setInterval: callback => { tick = callback; },
+        chrome: { runtime: { sendMessage: async message => {
+            sent.push(JSON.parse(JSON.stringify(message)));
+            return { handled: true };
+        } } },
+    });
+    await tick();
+    document.head.querySelector = () => ({ content: "Danh mục video khiêu dâm" });
+    await tick();
+    await tick();
+    assert.deepEqual(sent, [
+        { type: "pulse" }, { type: "pulse" }, { type: "suspected-adult-content" }, { type: "pulse" },
+    ]);
 });

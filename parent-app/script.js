@@ -188,9 +188,10 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                             showDesktopNotification("📩 Yêu cầu mới từ con!", `Bé vừa xin: "${data.data?.target_detail || ''}"\nLý do: ${data.data?.reason_from_child || ''}`);
                             showToast(`🔔 Bé vừa xin phép: "${data.data.target_detail}" - Lý do: ${data.data.reason_from_child}`, "info");
                             fetchRequests();
-                        } else if (data.type === "ADULT_WEBSITE_BLOCKED") {
+                        } else if (["ADULT_WEBSITE_BLOCKED", "SUSPECTED_ADULT_WEBSITE"].includes(data.type)) {
                             if (data.first_attempt) {
-                                const text = `${data.child_name || "Máy con"} · Đã chặn ${data.domain}`;
+                                const suspected = data.type === "SUSPECTED_ADULT_WEBSITE";
+                                const text = `${data.child_name || "Máy con"} · ${suspected ? "Nghi ngờ 18+" : "Đã chặn"} ${data.domain}`;
                                 playNotificationSound("alert");
                                 showDesktopNotification("Cảnh báo 18+", text);
                                 showToast(text, "danger");
@@ -931,6 +932,8 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                     let catBadge = `<span class="text-[9px] bg-blue-100 text-blue-800 border border-blue-200 font-bold px-1.5 py-0.5 rounded">⚠️ Web Lạ Chưa Phép</span>`;
                     if (a.category === "ADULT_WEBSITE") {
                         catBadge = '<span class="text-[10px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded">18+</span>';
+                    } else if (a.category === "SUSPECTED_ADULT_WEBSITE") {
+                        catBadge = '<span class="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">Nghi ngờ 18+</span>';
                     } else if (a.category === "AI_CONTENT_TEXT") {
                         catBadge = `<span class="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded shadow-xs">Cảnh báo văn bản</span>`;
                     } else if (a.category === "AI_CONTENT_IMAGE") {
@@ -955,11 +958,11 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                                 </div>
                             </div>
                             <div class="flex items-center gap-1.5 self-end sm:self-auto">
-                                ${a.category !== "ADULT_WEBSITE" ? `<button data-argument="${escapeHtml(a.target_value)}" onclick="quickAllowAlert(this.dataset.argument)" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition">
+                                ${!["ADULT_WEBSITE", "SUSPECTED_ADULT_WEBSITE"].includes(a.category) ? `<button data-argument="${escapeHtml(a.target_value)}" onclick="quickAllowAlert(this.dataset.argument)" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition">
                                     ✅ Cho phép
-                                </button>
-                                <button data-argument="${escapeHtml(a.target_value)}" onclick="quickBlockAlert(this.dataset.argument)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-xs transition">
-                                    ⛔ Chặn
+                                </button>` : ""}
+                                ${a.category !== "ADULT_WEBSITE" ? `<button data-argument="${escapeHtml(a.target_value)}" onclick="quickBlockAlert(this.dataset.argument)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-xs transition">
+                                    ${a.category === "SUSPECTED_ADULT_WEBSITE" ? "Chặn tên miền" : "⛔ Chặn"}
                                 </button>
                                 ` : ""}
                                 <button onclick="deleteAlert(${a.id})" class="p-1 text-slate-400 hover:text-rose-600 transition" title="Xóa cảnh báo">
@@ -994,7 +997,7 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
 
         async function quickBlockAlert(target) {
             try {
-                await consoleFetch(`${API_BASE}/rules/`, {
+                const response = await consoleFetch(`${API_BASE}/rules/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -1003,10 +1006,13 @@ const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/agent/parent_dashboard";
                         action: "BLOCK"
                     })
                 });
+                if (!response.ok) throw new Error("Không thể lưu quy tắc chặn.");
                 showToast(`⛔ Đã đưa "${target}" vào danh sách chặn!`, "info");
                 fetchAlerts();
                 fetchRules();
-            } catch (e) {}
+            } catch (error) {
+                showToast(error.message, "danger");
+            }
         }
 
         async function sendRemoteDeviceCommand(hwid, action, data = {}) {

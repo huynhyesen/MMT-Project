@@ -78,6 +78,8 @@ Tiện ích đo thời gian khi tab được chọn và cửa sổ trình duyệ
 
 Tên miền 18+ thuộc bộ lọc bị chặn trước khi tải. Trang thông báo cho trẻ biết lý do và dashboard phụ huynh nhận cảnh báo có tên miền, hồ sơ và thời điểm. Các lần thử lại trên cùng tên miền trong vòng 5 phút được gộp. Tiện ích cần một phiên Góc Của Con đã đăng nhập để gửi cảnh báo. Bộ lọc áp dụng theo tên miền, nên nội dung 18+ bên trong một nền tảng thông thường có thể lọt qua.
 
+Khi trẻ mở một tên miền chưa phân loại, tiện ích dùng từ khóa để kiểm tra tiêu đề và thẻ mô tả ngay trong trình duyệt. Khi phát hiện dấu hiệu 18+, tiện ích chỉ gửi tên miền qua phiên theo dõi đã đăng nhập. Phụ huynh có thể chọn **Chặn tên miền** trong mục **Cảnh báo & Lọc nội dung**. Lớp này đánh giá sau khi trang bắt đầu tải và có thể bỏ sót trang thiếu thông tin mô tả hoặc cảnh báo nhầm nội dung trích dẫn từ khóa.
+
 Máy phụ huynh có thể đặt `MMT_ADULT_DOMAINS_FILE` trỏ tới một file UTF-8 với mỗi tên miền trên một dòng. Backend đọc lại file định kỳ và gửi danh sách bổ sung cho tiện ích. Có thể cập nhật file từ một nguồn đã kiểm duyệt mà không gửi lịch sử duyệt web ra ngoài MMT. File hỗ trợ tối đa 10.000 tên miền và dung lượng tối đa khoảng 1 MiB.
 
 Agent áp dụng quy tắc ứng dụng theo tên tiến trình, ví dụ `RobloxPlayerBeta.exe` hoặc `roblox`. API `/ai/content-check` kiểm tra tên miền và cảnh báo khi văn bản được gửi vào khớp từ khóa. Phiên bản hiện tại chưa có mô hình AI quét nội dung trang, hình ảnh hoặc màn hình của trẻ.
